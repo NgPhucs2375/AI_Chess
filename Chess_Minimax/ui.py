@@ -282,6 +282,33 @@ class GameState:
         r,c = king_pos
         return self.is_square_attacked(r,c, 'b' if color=='w' else 'w')
 
+    def is_insufficient_material(self):
+        """Return True if position is insufficient mating material under a simple rule:
+        - only two kings remain, OR
+        - two kings and a single minor piece (bishop or knight) remain.
+        This matches the requested rule: draw when only 2 kings and 1 bishop or knight.
+        """
+        pieces = []
+        for r in range(8):
+            for c in range(8):
+                p = self.board[r][c]
+                if p != "":
+                    pieces.append(p)
+
+        # count kings and non-king pieces
+        kings = [p for p in pieces if p[1] == 'k']
+        others = [p for p in pieces if p[1] != 'k']
+
+        # only two kings
+        if len(kings) == 2 and len(others) == 0:
+            return True
+
+        # two kings and a single minor piece (bishop or knight)
+        if len(kings) == 2 and len(others) == 1 and others[0][1] in ('b', 'n'):
+            return True
+
+        return False
+
     # get all legal moves for side to move (filters out those leaving king in check)
     def get_all_legal_moves(self):
         moves = []
@@ -519,17 +546,20 @@ def draw_promotion_menu(turn, menu_x):
     piece_codes = ['q', 'r', 'b', 'n']  # quân cờ có thể chọn để thăng cấp
     colors = {'w': (255, 255, 255), 'b': (0, 0, 0)}
     # background
-    pygame.draw.rect(screen, WHITE, pygame.Rect(menu_x, HEIGHT//2 - PROMOTION_PIECE_SIZE//2, PROMOTION_PIECE_SIZE + 2*PROMOTION_PADDING, PROMOTION_PIECE_SIZE + 2*PROMOTION_PADDING))
+    # compute background width to fit all choices and paddings, then draw centered bg at menu_x
+    bg_w = len(piece_codes) * PROMOTION_PIECE_SIZE + (len(piece_codes) + 1) * PROMOTION_PADDING
+    bg_h = PROMOTION_PIECE_SIZE + 2 * PROMOTION_PADDING
+    pygame.draw.rect(screen, WHITE, pygame.Rect(menu_x, HEIGHT//2 - bg_h//2, bg_w, bg_h))
     piece_positions = []
     for i, code in enumerate(piece_codes):
-        piece_color = turn
-        if turn == 'w':
-            piece_color = code.upper()
-        img = pieces[piece_color+code]
+        # piece_color must be 'w' or 'b' to match keys in `pieces` (e.g., 'wq', 'bq')
+        piece_color = 'w' if turn == 'w' else 'b'
+        img = pieces[piece_color + code]
         x = menu_x + PROMOTION_PADDING + (i * (PROMOTION_PIECE_SIZE + PROMOTION_PADDING))
         y = HEIGHT//2 - PROMOTION_PIECE_SIZE//2 + PROMOTION_PADDING
         screen.blit(img, pygame.Rect(x, y, PROMOTION_PIECE_SIZE, PROMOTION_PIECE_SIZE))
-        piece_positions.append((pygame.Rect(x, y, PROMOTION_PIECE_SIZE, PROMOTION_PIECE_SIZE), piece_color+code))
+        # return the single-letter code (lowercase) as the promotion choice expected by GameState.make_move
+        piece_positions.append((pygame.Rect(x, y, PROMOTION_PIECE_SIZE, PROMOTION_PIECE_SIZE), code))
     return piece_positions
 
 # --- Hàm chính khởi động game ---
@@ -539,6 +569,7 @@ def main():
     valid_moves_list = []
     target_map = {}
     awaiting_promotion = None  # store (move, from_square) waiting for choice
+    game_over = False
 
     running = True
     while running:
@@ -553,7 +584,8 @@ def main():
                 if awaiting_promotion:
                     move_pending = awaiting_promotion
                     # compute menu rects same as draw_promotion_menu
-                    menu_x = (WIDTH - (PROMOTION_PIECE_SIZE + 2*PROMOTION_PADDING)) // 2
+                    bg_w = 4 * PROMOTION_PIECE_SIZE + 5 * PROMOTION_PADDING
+                    menu_x = (WIDTH - bg_w) // 2
                     piece_positions = draw_promotion_menu(
                         'w' if gs.white_to_move else 'b', menu_x)
                     # piece_positions are rects in screen coords; check click
@@ -605,7 +637,12 @@ def main():
                                     selected_square = None
                                     valid_moves_list = []
                                     target_map = {}
-                                    # check mate/stalemate etc (existing logic)
+                                    # after move, check for insufficient-material draw
+                                    if gs.is_insufficient_material():
+                                        print("Draw by insufficient material (only kings and at most one minor piece).")
+                                        pygame.display.set_caption("Draw by insufficient material")
+                                        game_over = True
+                                        running = False
                             else:
                                 # clicked other square: maybe select new piece
                                 p = gs.board[row][col]
@@ -639,6 +676,17 @@ def main():
 
         # --- Vẽ lịch sử nước đi ---
         draw_move_history(screen, gs.move_history)
+
+        # Nếu đang chờ người chơi chọn quân để phong: vẽ overlay và menu phong
+        if awaiting_promotion:
+            # semi-transparent overlay to indicate modal state
+            overlay = pygame.Surface((WIDTH, HEIGHT))
+            overlay.set_alpha(160)
+            overlay.fill((0, 0, 0))
+            screen.blit(overlay, (0, 0))
+            bg_w = 4 * PROMOTION_PIECE_SIZE + 5 * PROMOTION_PADDING
+            menu_x = (WIDTH - bg_w) // 2
+            draw_promotion_menu('w' if gs.white_to_move else 'b', menu_x)
 
         # --- Hiển thị quân cờ đã chọn và nước đi hợp lệ ---
         if selected_square:
