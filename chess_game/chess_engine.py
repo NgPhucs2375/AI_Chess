@@ -21,7 +21,7 @@ class TranspositionTable:
         if entry is None:
             return None
         edepth,flag,val,mmove = entry
-        if edepth >= depth:
+        if edepth < depth:
             return None
         if flag == 'EXACT':
             return val, mmove,flag
@@ -121,14 +121,33 @@ class ChessEngine:
         if self.board.is_stalemate() or self.board.is_insufficient_material():
             return 0
 
-        score = 0
-        score += self._material_eval()
-        score += self._mobility_eval()
-        score += self._pawn_structure_eval()
-        score += self._center_control_eval()
-        score += self._King_safety_eval()
-        score += self._threats_eval()
+        material = self._material_eval()
+        mobility = self._mobility_eval()
+        pawn_struct = self._pawn_structure_eval()
+        center = self._center_control_eval()
+        king_safety = self._King_safety_eval()
+        threats = self._threats_eval()
         
+        # dùng trọng số để diều chỉnh và tái cấu trúc ảnh hưởng của các quân cờ vì nếu không thì máy sẽ ưu tiên phát triển trung tâm và khai mở vua hơn cả việc mất Ngựa :) điên vl
+       
+        score = (
+            3.0 * material + 
+            0.20 * mobility +
+            0.30 * pawn_struct +
+            0.10 * center +
+            0.90 * king_safety +
+            0.90 * threats
+        )
+        
+        #  dùng để phạt các quân cờ bị ăn (hanging pieces)
+        hang_penalty = 300
+        for sq, pc in self.board.piece_map().items():
+            if pc.color == chess.WHITE:
+                if self.is_hanging(sq):
+                    score -= hang_penalty
+            else:
+                if self.is_hanging(sq):
+                    score += hang_penalty
         return int(score)
    
 
@@ -321,7 +340,7 @@ class ChessEngine:
         return score
     
     def _threats_eval(self):
-        """Đánh giá các mối đe dọa trên bàn cờ"""
+        """Đánh giá các mối đe dọa trên bàn cờ (sửa double-count)."""
         score = 0
         piece_values = self.piece_values
         for sq in chess.SQUARES:
@@ -331,23 +350,24 @@ class ChessEngine:
             attackers = self.board.attackers(not piece.color, sq)
             defenders = self.board.attackers(piece.color, sq)
 
-            # neu bi tan cong ma khong duoc bao vw -> phat diem
+            # penalty nếu bị tấn công mà không có người bảo vệ
             if attackers and not defenders:
+                pen = self.piece_values[piece.piece_type] * 1.2
                 if piece.color == chess.WHITE:
-                    score -= piece_values[piece.piece_type]
+                    score -= pen
                 else:
-                    score += piece_values[piece.piece_type]
-                    
-            # neu quan minh dang tan cong quan co gia tri cao hon -> thuong diem        
-            for at in attackers:
-                target = self.board.piece_at(sq)
-                attackers_piece = self.board.piece_at(at)
-                if target and attackers_piece and piece_values[target.piece_type] > piece_values[attackers_piece.piece_type]:
-                    if attackers_piece.color == chess.WHITE:
-                        score += 15
-                    else:
-                        score -= 15
+                    score += pen
 
+            # reward nếu ta tấn công vật hơn kẻ địch tấn công
+            for at in attackers:
+                attackers_piece = self.board.piece_at(at)
+                if attackers_piece:
+                    target = piece
+                    if target and attackers_piece and piece_values[target.piece_type] > piece_values[attackers_piece.piece_type]:
+                        if attackers_piece.color == chess.WHITE:
+                            score += 15
+                        else:
+                            score -= 15
         return score
     
     def _mvv_lva_value(self,move):
@@ -356,43 +376,136 @@ class ChessEngine:
             return 0
         victim = self.board.piece_at(move.to_square)
         attacker = self.board.piece_at(move.from_square)
-        if victim and attacker:
+        # nếu thiếu thông tin thì không đánh giá
+        if not victim or not attacker:
             return 0
         v = self.piece_values.get(victim.piece_type,0)
         a = self.piece_values.get(attacker.piece_type,0)
-        return 10000 + (v*10-a)
+        return 10000 + (v*10 - a)
     
-    def _order_moves_improved(self,depth):
-        """cai tien yeu cau sap xep nuoc di voi MVV-LVA, killer move va history heuristic"""
+    def static_exchange_eval(self, move):
+        """Approximate full SEE by simulating captures on a copied board.
+        Trả về giá trị vật chất ròng (>=0 có lợi, <0 bất lợi)."""
+        # only meaningful for captures
+        if not self.board.is_capture(move):
+            return 0
+
+        try:
+            sim = self.board.copy()
+        except Exception:
+            # fallback to push/pop on original board if copy not available (rare)
+            self.board.push(move)
+            val = self.piece_values.get(self.board.piece_at(move.to_square).piece_type, 0) if self.board.piece_at(move.to_square) else 0
+            self.board.pop()
+            return val
+
+        # initial victim value (what move captures)
+        victim_piece = self.board.piece_at(move.to_square)
+        if victim_piece is None and self.board.is_en_passant(move):
+            # en-passant victim square (behind to_square)
+            ep_sq = move.to_square + ( -8 if self.board.turn == chess.WHITE else 8 )
+            victim_piece = self.board.piece_at(ep_sq)
+        victim_value = self.piece_values.get(victim_piece.piece_type, 0) if victim_piece else 0
+
+        gains = [victim_value]
+
+        # play the initial move on simulation board
+        try:
+            sim.push(move)
+        except Exception:
+            # illegal weird move: treat as neutral
+            return 0
+
+        target = move.to_square
+        side = sim.turn  # opponent to move now
+
+        # simulate sequence of cheapest recaptures until none left
+        while True:
+            # collect legal captures that land on target square
+            captures = [m for m in sim.legal_moves if m.to_square == target and sim.is_capture(m)]
+            if not captures:
+                break
+            # choose attacker with least material (cheapest attacker)
+            def attacker_value(mv):
+                p = sim.piece_at(mv.from_square)
+                return self.piece_values.get(p.piece_type, 0) if p else 0
+            best = min(captures, key=attacker_value)
+            # value of piece that will be captured by this recapture
+            captured = sim.piece_at(best.to_square)
+            cap_val = self.piece_values.get(captured.piece_type, 0) if captured else 0
+            gains.append(cap_val)
+            sim.push(best)
+            side = sim.turn
+
+        # minimax-like resolution of gains to get net material outcome
+        net = 0
+        for g in reversed(gains):
+            net = g - max(0, net)
+
+        return net
+
+    def _order_moves_improved(self, depth):
+        """Improved ordering: TT best move, MVV-LVA, promotions, killers, history,
+           and penalize captures that SEE says are losing."""
         moves = list(self.board.legal_moves)
+
+        # TT best move
         key_tt = None
         try:
             h = self.zobrist_hash()
             tt_entry = self.tt.table.get(h)
             if tt_entry:
-                key_tt = tt_entry[3]  # best move from TT
+                key_tt = tt_entry[3]
         except Exception:
             key_tt = None
-        
+
+        # precompute attackers of our pieces for defensive bonuses
+        my_color = self.board.turn
+        attackers_of_my = set()
+        for sq, pc in self.board.piece_map().items():
+            if pc.color == my_color:
+                attackers_of_my.update(self.board.attackers(not my_color, sq))
+
+        k1, k2 = self.killers.get(depth, [None, None])
+
         def score_move(m):
             s = 0
-            if key_tt and m == key_tt:
-                s += 100000  # diem cao nhat cho nuoc di TT
-            s += self._mvv_lva_value(m)  # MVV-LVA dung de danh gia nuoc di an quan co tot hon nuoc di khong an
-            if m.promotion: # neu la nuoc an quan co thi cung uu tien
-                s += 8000  # uu tien cho nuoc thang quan
-            # killer move heuristic
-            k1,k2 = self.killers.get(depth,(None,None)) # lay 2 nuoc di killer de so sanh voi nuoc di hien tai va tang diem neu trung
-            if m == k1: # so sanh voi nuoc di killer 1 neu trung tang diem
+            if key_tt is not None and m == key_tt:
+                s += 100000
+            s += self._mvv_lva_value(m)
+            if m.promotion:
+                s += 8000
+            if m == k1:
                 s += 5000
-            elif m == k2: # so sanh voi nuoc di killer 2 neu trung tang diem
+            elif m == k2:
                 s += 4000
-            s += self.history.get((m.from_square,m.to_square),0)  # history heuristic
-            return -s  # sap xep tang dan
-        
-        moves.sort(key=score_move) # saap xep nuoc di cho diem cao den thap
-        return moves # tra ve danh sach nuoc di da sap xep
-    
+            s += self.history.get((m.from_square, m.to_square), 0)
+
+            # Defensive bonuses
+            if self.is_hanging(m.from_square):
+                s += 600
+            if self.board.is_capture(m) and m.to_square in attackers_of_my:
+                s += 1200
+            for atk_sq in attackers_of_my:
+                # moving to square that attacks an attacker
+                if atk_sq in self.board.attacks(m.to_square):
+                    s += 800
+                    break
+
+            # Use SEE: if capture is losing on exchange, heavily penalize
+            if self.board.is_capture(m):
+                see_val = self.static_exchange_eval(m)
+                if see_val < 0:
+                    s -= 20000  # deprioritize losing captures strongly
+                else:
+                    # small bonus for winning captures
+                    s += min(2000, see_val * 8)
+
+            return -s  # sort ascending, negate to prefer larger s
+
+        moves.sort(key=score_move)
+        return moves
+
     def _record_killer(self,move,depth):
         """Luu nuoc di killer vao danh sach killer moves"""
         k1,k2 = self.killers.get(depth,(None,None))
@@ -403,7 +516,7 @@ class ChessEngine:
             self.killers[depth][1] = k1  # dich chuyen killer 1 xuong killer 2
             self.killers[depth][0] = move  # luu nuoc di hien tai vao killer 1
     
-    def _record_history(self,move,depth,bonus=1): # truyen vao 4 tham so bao gom khoi tao, nuoc di, do sau, diem tang them
+    def _record_history(self,move,depth,bonus=1): # truyen vao 4 tham so bao gom
         """Cập nhật bảng lịch sử cho nước đi"""
         key = (move.from_square, move.to_square) # tao key tu nuoc di va o den de cap nhat vao history de tang toc do alpha-beta
         self.history[key] += bonus * (2 ** depth) # tang diem cho nuoc di trong history heuristic
@@ -428,12 +541,9 @@ class ChessEngine:
 
     def minimax_alpha_beta(self, depth, alpha, beta, is_maximizing):
         """Minimax với cắt tỉa alpha-beta và bộ nhớ đệm bảng chuyển vị."""
-        # kiem tra timeout : neu het thoi gian thi tra ve danh gia hien tai con khong can tim nuoc di
         if self.stop_time is not None and time.time() > self.stop_time:
             return self.evaluate_board(), None
-               
-       
-          # probe TT first
+
         h = self.zobrist_hash()
         tt_hit = self.tt.probe(h, depth, alpha, beta)
         if tt_hit is not None:
@@ -445,9 +555,20 @@ class ChessEngine:
             return val, None
 
         best_move = None
+        alpha_orig, beta_orig = alpha, beta   # <-- giữ giá trị ban đầu
         if is_maximizing:
             max_eval = float('-inf')
             for move in self._order_moves_improved(depth):
+                # thay cho chess.see: simple static-exchange-like filter (không dùng hàm chess.see)
+                if self.board.is_capture(move):
+                    victim = self.board.piece_at(move.to_square)
+                    attacker = self.board.piece_at(move.from_square)
+                    if victim and attacker:
+                        gain = self.piece_values.get(victim.piece_type, 0) - self.piece_values.get(attacker.piece_type, 0)
+                        # bỏ qua những nước ăn gây thiệt hại vật chất ròng
+                        if gain < 0:
+                            continue
+
                 self.board.push(move)
                 eval_score, _ = self.minimax_alpha_beta(depth - 1, alpha, beta, False)
                 self.board.pop()
@@ -464,11 +585,10 @@ class ChessEngine:
                         self._record_killer(move, depth)
                         self._record_history(move, depth, bonus=1)
                     break
-            
-            # store in TT
-            if max_eval <= alpha:
+            # store in TT: dùng alpha_orig/beta_orig để quyết flag
+            if max_eval <= alpha_orig:
                 flag = 'UPPER'
-            elif max_eval >= beta:
+            elif max_eval >= beta_orig:
                 flag = 'LOWER'
             else:
                 flag = 'EXACT'
@@ -493,17 +613,25 @@ class ChessEngine:
                         self._record_killer(move, depth)
                         self._record_history(move, depth, bonus=1)
                     break
-            # store in TT
-            if min_eval <= alpha:
+            # store in TT: dùng alpha_orig/beta_orig để quyết flag
+            if min_eval <= alpha_orig:
                 flag = 'UPPER'
-            elif min_eval >= beta:
+            elif min_eval >= beta_orig:
                 flag = 'LOWER'
             else:
                 flag = 'EXACT'
             self.tt.store(h, depth, flag, min_eval, best_move)
             return min_eval, best_move
 
-    def best_move(self,depth=5,time_limit=3.0):
+    def best_move(self,depth=3,time_limit=5.0): # hehe tang depth de bot khong len tam 5 la no may roi cai con lai la thoi gian bot phan hoi trong khoang time do lay toi uu nhat tinh ra dc
+            """ Test depth = 3–4 thôi.
+
+                Quan sát xem bot có còn “thí quân” không.
+
+                Nếu nó chơi quá bị động → tăng hệ số mobility và center.
+
+                Nếu nó vẫn thí quân → tăng material lên 1.2 hoặc 1.5. """
+                
             """ dung iterative deepening de tim nuoc di tot nhat trong gioi han thoi gian """
             start = time.time()
             self.stop_time = start + time_limit
@@ -526,4 +654,15 @@ class ChessEngine:
             finally:
                 self.stop_time = None  # reset timeout
             return best_move
+
+    def is_hanging(self, square):
+        """True nếu ô có quân ta bị tấn công nhưng không được bảo vệ."""
+        piece = self.board.piece_at(square)
+        if not piece:
+            return False
+        attackers = self.board.attackers(not piece.color, square)
+        if not attackers:
+            return False
+        defenders = self.board.attackers(piece.color, square)
+        return len(defenders) == 0
 
