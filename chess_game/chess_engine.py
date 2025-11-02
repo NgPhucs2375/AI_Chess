@@ -1,6 +1,7 @@
 import chess
 import time
 import random
+import collections 
 from collections import defaultdict
 
 class TranspositionTable:
@@ -33,6 +34,7 @@ class TranspositionTable:
 
 class ChessEngine:
     def __init__(self):
+        print("--- 100% ĐANG CHẠY CODE ENGINE MỚI NHẤT! ---")
         # start position
         self.board = chess.Board()
         # transposition cache (fen, depth, is_maximizing) -> (score, best_move)
@@ -55,7 +57,7 @@ class ChessEngine:
             chess.KING: 1 # Vua có 8 nước đi -> 8 điểm
         }
         
-        self.PST = self.__init___piece_square_tables()
+        self.__init___piece_square_tables()
         
         # zobrist + TT + killer + history 
         self._init_zobrist()
@@ -120,11 +122,24 @@ class ChessEngine:
         if self.board.is_stalemate() or self.board.is_insufficient_material():
             return 0
 
+        # Lấy giai đoạn ván cờ MỘT LẦN
+        game_phase = self._get_game_phase_taper()
+        
+        # Chỉ đánh giá an toàn Vua (lá chắn Tốt) nếu đang ở Trung cuộc
+        # (ví dụ: phase > 4, tức là chưa phải tàn cuộc hoàn toàn)
+        if game_phase > 4:
+            king_safety = self._King_safety_eval()
+        else:
+            king_safety = 0 # ở tàn cuộc, không cần lá chắn Tốt.
+            
+            
+        
+        
         material = self._material_eval()
         mobility = self._mobility_eval()
         pawn_struct = self._pawn_structure_eval()
         center = self._center_control_eval()
-        king_safety = self._King_safety_eval()
+        # king_safety = self._King_safety_eval()
         # threats = self._threats_eval()
         
         # dùng trọng số để diều chỉnh và tái cấu trúc ảnh hưởng của các quân cờ vì nếu không thì máy sẽ ưu tiên phát triển trung tâm và khai mở vua hơn cả việc mất Ngựa :) điên vl
@@ -144,30 +159,19 @@ class ChessEngine:
 
     
 
-    def _material_eval(self): 
-        """Đánh giá vật chất và bảng vị trí quân cờ"""
-        score = 0
-        for sq in chess.SQUARES:
-            piece = self.board.piece_at(sq)
-            if not piece:
-                continue
-            val = self.piece_values[piece.piece_type]
-            pst = self.PST[piece.piece_type]
-            if piece.color == chess.WHITE:
-                score += val + pst[sq]
-            else:
-                score -= val + pst[chess.square_mirror(sq)]
-        return score
+
 
     def _mobility_eval(self):
         """Đánh giá khả năng di chuyển của các quân cờ"""
         score = 0
-        for sq in chess.SQUARES:
-            piece = self.board.piece_at(sq)
-            if not piece:
+        for sq,piece in self.board.piece_map().items():
+            # Bỏ qua Tốt, vì 'attacks' của Tốt không phải là 'moves'
+            # Độ cơ động của Tốt đã được xử lý trong PST và pawn_structure_eval
+            if piece.piece_type == chess.PAWN:
                 continue
             attacks = len(self.board.attacks(sq))
             w = self.mobility_weights.get(piece.piece_type, 0)
+            
             if piece.color == chess.WHITE:
                 score += attacks * w
             else:
@@ -175,49 +179,96 @@ class ChessEngine:
         return score
 
     def _pawn_structure_eval(self):
-        """Đánh giá cấu trúc tốt của các con tốt"""
+        """Đánh giá cấu trúc tốt của các con tốt (Đã sửa lỗi và tối ưu hóa)."""
         score = 0
-        pawn_files_white = [chess.square_file(sq) for sq in self.board.pieces(chess.PAWN, chess.WHITE)]
-        pawn_files_black = [chess.square_file(sq) for sq in self.board.pieces(chess.PAWN, chess.BLACK)]
+        
+        # Lấy tất cả các quân Tốt một lần
         white_pawns = set(self.board.pieces(chess.PAWN, chess.WHITE))
         black_pawns = set(self.board.pieces(chess.PAWN, chess.BLACK))
+        
+        # Tạo các đối tượng Piece để so sánh (hiệu quả hơn)
+        white_pawn_piece = chess.Piece(chess.PAWN, chess.WHITE)
+        black_pawn_piece = chess.Piece(chess.PAWN, chess.BLACK)
 
+        # Lấy danh sách các cột Tốt
+        pawn_files_white = [chess.square_file(sq) for sq in white_pawns]
+        pawn_files_black = [chess.square_file(sq) for sq in black_pawns]
+        
+        # 1. Xử lý Tốt Chồng (Doubled) - Hiệu suất cao O(N)
         doubled_penalty = 25
+        white_file_counts = collections.Counter(pawn_files_white)
+        black_file_counts = collections.Counter(pawn_files_black)
+        
+        for count in white_file_counts.values():
+            if count > 1:
+                score -= doubled_penalty * (count - 1) # Phạt mỗi Tốt *thêm*
+        
+        for count in black_file_counts.values():
+            if count > 1:
+                score += doubled_penalty * (count - 1)
+        
+        # 2. Xử lý Tốt Cô Lập (Isolated) - Hiệu suất cao O(N)
         isolated_penalty = 20
-        passed_bonus = 25
+        white_file_set = set(pawn_files_white)
+        black_file_set = set(pawn_files_black)
+        
+        for f in white_file_set:
+            if (f - 1) not in white_file_set and (f + 1) not in white_file_set:
+                # Tốt trên cột 'f' bị cô lập. Phạt cho TẤT CẢ Tốt trên cột đó.
+                score -= isolated_penalty * white_file_counts[f]
+        
+        for f in black_file_set:
+            if (f - 1) not in black_file_set and (f + 1) not in black_file_set:
+                score += isolated_penalty * black_file_counts[f]
 
-        def is_passed(sq, color):
-            """Kiểm tra xem con tốt có phải là con tốt THONG KHONG"""
+        # Hàm is_passed (giữ nguyên logic, nhưng dùng set)
+        def is_passed(sq, color, my_pawns, enemy_pawns):
             f = chess.square_file(sq)
             r = chess.square_rank(sq)
-            enemy = black_pawns if color == chess.WHITE else white_pawns
-            for ep in enemy:
+        
+            for ep in enemy_pawns:
                 ef = chess.square_file(ep)
                 er = chess.square_rank(ep)
+                # Nếu Tốt địch ở cột liền kề hoặc cùng cột
                 if abs(ef - f) <= 1:
+                    # Và Tốt địch ở phía trước
                     if (color == chess.WHITE and er > r) or (color == chess.BLACK and er < r):
                         return False
-            return True
+        return True
 
-        for sq in self.board.pieces(chess.PAWN, chess.WHITE):
-            f = chess.square_file(sq)
-            if pawn_files_white.count(f) > 1:
-                score -= doubled_penalty
-            if not any(adj in pawn_files_white for adj in (f - 1, f + 1) if 0 <= adj <= 7):
-                score -= isolated_penalty
-            if is_passed(sq, chess.WHITE):
+        # 3. Xử lý Tốt Thông (Passed) và Tốt Được Bảo Vệ (Protected)
+        passed_bonus = 25
+        protected_bonus = 10 # Thưởng điểm mới
+
+        for sq in white_pawns:
+        # Kiểm tra Tốt thông
+            if is_passed(sq, chess.WHITE, white_pawns, black_pawns):
                 score += passed_bonus
-
-        for sq in self.board.pieces(chess.PAWN, chess.BLACK):
+        
+        # Kiểm tra Tốt được bảo vệ
+            r = chess.square_rank(sq)
             f = chess.square_file(sq)
-            if pawn_files_black.count(f) > 1:
-                score += doubled_penalty
-            if not any(adj in pawn_files_black for adj in (f - 1, f + 1) if 0 <= adj <= 7):
-                score += isolated_penalty
-            if is_passed(sq, chess.BLACK):
+            if r > 0: # Không thể là Tốt ở hàng 1
+                if f > 0 and self.board.piece_at(chess.square(f - 1, r - 1)) == white_pawn_piece:
+                    score += protected_bonus
+                if f < 7 and self.board.piece_at(chess.square(f + 1, r - 1)) == white_pawn_piece:
+                    score += protected_bonus
+    
+        for sq in black_pawns:
+            # Kiểm tra Tốt thông
+            if is_passed(sq, chess.BLACK, black_pawns, white_pawns):
                 score -= passed_bonus
+        
+            # Kiểm tra Tốt được bảo vệ
+            r = chess.square_rank(sq)
+            f = chess.square_file(sq)
+            if r < 7: # Không thể là Tốt ở hàng 8
+                if f > 0 and self.board.piece_at(chess.square(f - 1, r + 1)) == black_pawn_piece:
+                    score -= protected_bonus
+                if f < 7 and self.board.piece_at(chess.square(f + 1, r + 1)) == black_pawn_piece:
+                    score -= protected_bonus
 
-        return score
+        return score   
 
     def _center_control_eval(self):
         """Đánh giá kiểm soát trung tâm"""
@@ -230,68 +281,172 @@ class ChessEngine:
 
     def __init___piece_square_tables(self):
         """Khởi tạo PSTs (Piece Square Tables)."""
-        return {
-            chess.PAWN: [
-                0,0,0,0,0,0,0,0,
-                5,10,10,-20,-20,10,10,5,
-                5,-5,-10,0,0,-10,-5,5,
-                0,0,0,20,20,0,0,0,
-                5,5,10,25,25,10,5,5,
-                10,10,20,30,30,20,10,10,
-                50,50,50,50,50,50,50,50,
-                0,0,0,0,0,0,0,0
-            ],
-            chess.KNIGHT: [
-                -50,-40,-30,-30,-30,-30,-40,-50,
-                -40,-20,0,0,0,0,-20,-40,
-                -30,0,10,15,15,10,0,-30,
-                -30,5,15,20,20,15,5,-30,
-                -30,0,15,20,20,15,0,-30,
-                -30,5,10,15,15,10,5,-30,
-                -40,-20,0,5,5,0,-20,-40,
-                -50,-40,-30,-30,-30,-30,-40,-50
-            ],
-            chess.BISHOP: [
-                -20,-10,-10,-10,-10,-10,-10,-20,
-                -10,0,0,0,0,0,0,-10,
-                -10,0,5,10,10,5,0,-10,
-                -10,5,5,10,10,5,5,-10,
-                -10,0,10,10,10,10,0,-10,
-                -10,10,10,10,10,10,10,-10,
-                -10,5,0,0,0,0,5,-10,
-                -20,-10,-10,-10,-10,-10,-10,-20
-            ],
-            chess.ROOK: [
-                0,0,0,0,0,0,0,0,
-                5,10,10,10,10,10,10,5,
-                -5,0,0,0,0,0,0,-5,
-                -5,0,0,0,0,0,0,-5,
-                -5,0,0,0,0,0,0,-5,
-                -5,0,0,0,0,0,0,-5,
-                -5,0,0,0,0,0,0,-5,
-                0,0,0,5,5,0,0,0
-            ],
-            chess.QUEEN: [
-                -20,-10,-10,-5,-5,-10,-10,-20,
-                -10,0,0,0,0,0,0,-10,
-                -10,0,5,5,5,5,0,-10,
-                -5,0,5,5,5,5,0,-5,
-                0,0,5,5,5,5,0,0,
-                -10,5,5,5,5,5,0,-10,
-                -10,0,5,0,0,0,0,-10,
-                -20,-10,-10,-5,-5,-10,-10,-20
-            ],
-            chess.KING: [
-                -30,-40,-40,-50,-50,-40,-40,-30,
-                -30,-40,-40,-50,-50,-40,-40,-30,
-                -30,-40,-40,-50,-50,-40,-40,-30,
-                -30,-40,-40,-50,-50,-40,-40,-30,
-                -20,-30,-30,-40,-40,-30,-30,-20,
-                -10,-20,-20,-20,-20,-20,-20,-10,
-                20,20,0,0,0,0,20,20,
-                20,30,10,0,0,10,30,20
-            ]
+       # Bảng Vua mới cho Trung cuộc: Khuyến khích nhập thành (ô g1, c1)
+        KING_MG_PST = [
+        -30,-40,-40,-50,-50,-40,-40,-30, # Hàng 1 (Tệ)
+        -30,-40,-40,-50,-50,-40,-40,-30,
+        -30,-40,-40,-50,-50,-40,-40,-30,
+        -30,-40,-40,-50,-50,-40,-40,-30,
+        -20,-30,-30,-40,-40,-30,-30,-20,
+        -10,-20,-20,-20,-20,-20,-20,-10,
+        20, 20, 0, 0, 0, 0, 20, 20, # Hàng 7 (Gần Tốt)
+        20, 30, 10, 0, 0, 10, 30, 20  # Hàng 8 (Vị trí nhập thành là tốt nhất)
+        ]
+        
+        # Bảng Vua cũ của bạn, giờ là Tàn cuộc: Khuyến khích trung tâm
+        KING_EG_PST = [
+        -50,-40,-30,-20,-20,-30,-40,-50,
+        -30,-20,-10, 0, 0,-10,-20,-30,
+        -30,-10, 20, 30, 30, 20,-10,-30,
+        -30,-10, 30, 40, 40, 30,-10,-30,
+        -30,-10, 30, 40, 40, 30,-10,-30,
+        -30,-10, 20, 30, 30, 20,-10,-30,
+        -30,-20,-10, 0, 0,-10,-20,-30,
+        -50,-40,-30,-20,-20,-30,-40,-50
+        ]
+        
+    # Bảng Tốt Trung cuộc (Tập trung vào trung tâm và cấu trúc)
+        PAWN_MG_PST = [
+        0, 0, 0, 0, 0, 0, 0, 0,
+        5, 10, 10, -20, -20, 10, 10, 5,
+        5, -5, -10, 0, 0, -10, -5, 5,
+        0, 0, 0, 20, 20, 0, 0, 0,
+        5, 5, 10, 25, 25, 10, 5, 5,
+        10, 10, 20, 30, 30, 20, 10, 10,
+        50, 50, 50, 50, 50, 50, 50, 50,
+        0, 0, 0, 0, 0, 0, 0, 0
+        ]
+        
+        # Bảng Tốt Tàn cuộc (Tập trung vào việc tiến lên để phong cấp)
+        PAWN_EG_PST = [
+        0, 0, 0, 0, 0, 0, 0, 0,
+        10, 10, 10, 10, 10, 10, 10, 10, # Hàng 2
+        20, 20, 20, 20, 20, 20, 20, 20, # Hàng 3
+        30, 30, 30, 30, 30, 30, 30, 30, # Hàng 4
+        40, 40, 40, 40, 40, 40, 40, 40, # Hàng 5
+        60, 60, 60, 60, 60, 60, 60, 60, # Hàng 6
+        100, 100, 100, 100, 100, 100, 100, 100, # Hàng 7 (Rất nguy hiểm)
+        0, 0, 0, 0, 0, 0, 0, 0
+        ]
+        KNIGHT_PST = [
+        -50,-40,-30,-30,-30,-30,-40,-50,
+        -40,-20,0,0,0,0,-20,-40,
+        -30,0,10,15,15,10,0,-30,
+        -30,5,15,20,20,15,5,-30,
+        -30,0,15,20,20,15,0,-30,
+        -30,5,10,15,15,10,5,-30,
+        -40,-20,0,5,5,0,-20,-40,
+        -50,-40,-30,-30,-30,-30,-40,-50
+        ]
+        BISHOP_PST = [
+        -20,-10,-10,-10,-10,-10,-10,-20,
+        -10,0,0,0,0,0,0,-10,
+        -10,0,5,10,10,5,0,-10,
+        -10,5,5,10,10,5,5,-10,
+        -10,0,10,10,10,10,0,-10,
+        -10,10,10,10,10,10,10,-10,
+        -10,5,0,0,0,0,5,-10,
+        -20,-10,-10,-10,-10,-10,-10,-20
+        ]
+        ROOK_PST = [
+        0,0,0,0,0,0,0,0,
+        5,10,10,10,10,10,10,5,
+        -5,0,0,0,0,0,0,-5,
+        -5,0,0,0,0,0,0,-5,
+        -5,0,0,0,0,0,0,-5,
+        -5,0,0,0,0,0,0,-5,
+        -5,0,0,0,0,0,0,-5,
+        0,0,0,5,5,0,0,0
+        ]
+        QUEEN_PST = [
+        -20,-10,-10,-5,-5,-10,-10,-20,
+        -10,0,0,0,0,0,0,-10,
+        -10,0,5,5,5,5,0,-10,
+        -5,0,5,5,5,5,0,-5,
+        0,0,5,5,5,5,0,0,
+        -10,5,5,5,5,5,0,-10,
+        -10,0,5,0,0,0,0,-10,
+        -20,-10,-10,-5,-5,-10,-10,-20
+        ]
+        
+        # Gán vào hai từ điển riêng biệt
+        self.PST_MG = {
+        chess.PAWN: PAWN_MG_PST, # <-- Dùng bảng Trung cuộc
+        chess.KNIGHT: KNIGHT_PST,
+        chess.BISHOP: BISHOP_PST,
+        chess.ROOK: ROOK_PST,
+        chess.QUEEN: QUEEN_PST,
+        chess.KING: KING_MG_PST # <-- Dùng bảng Trung cuộc
         }
+        
+        self.PST_EG = {
+        chess.PAWN: PAWN_EG_PST, # # <-- Dùng bảng Tàn cuộc
+        chess.BISHOP: BISHOP_PST,
+        chess.KNIGHT: KNIGHT_PST,
+        chess.ROOK: ROOK_PST,
+        chess.QUEEN: QUEEN_PST,
+        chess.KING: KING_EG_PST # <-- Dùng bảng Tàn cuộc
+        }
+    
+    def _get_game_phase_taper(self):
+        """Tính toán giai đoạn ván cờ (game phase taper).Trả về một giá trị từ 24 (Khai cuộc/Trung cuộc) giảm dần về 0 (Tàn cuộc)."""
+        # Trọng số cho các quân cờ (không tính Tốt và Vua)
+        phase_weights = {
+            chess.KNIGHT: 1,
+            chess.BISHOP: 1,
+            chess.ROOK: 2,
+            chess.QUEEN: 4
+        }
+        # Giá trị tối đa (2 Hậu, 4 Xe, 4 Tượng, 4 Mã)
+        max_phase = 24 
+        
+        current_phase = 0
+        for piece_type in (chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN):
+            # Đếm số quân của cả hai bên
+            count = len(self.board.pieces(piece_type, chess.WHITE)) + len(self.board.pieces(piece_type, chess.BLACK))
+            current_phase += count * phase_weights[piece_type]
+        
+        # Đảm bảo giá trị không vượt quá max_phase (ví dụ: Tốt phong cấp)
+        current_phase = min(current_phase, max_phase)
+        
+        return current_phase
+    
+    
+
+    def _material_eval(self): 
+        """Đánh giá vật chất và bảng vị trí quân cờ (có nhận biết giai đoạn)"""
+        score = 0
+        
+        # Lấy giai đoạn ván cờ (từ 24 -> 0)
+        phase = self._get_game_phase_taper()
+        max_phase = 24 # Phải khớp với hàm _get_game_phase_taper
+        
+        for sq in chess.SQUARES:
+            piece = self.board.piece_at(sq)
+            if not piece:
+                continue
+        
+            # 1. Tính giá trị vật chất
+            val = self.piece_values[piece.piece_type]
+            
+            # 2. Tính giá trị vị trí (PST) bằng cách trộn
+            mirrored_sq = chess.square_mirror(sq)
+            
+            # Lấy điểm từ cả hai bảng
+            pst_mg_score = self.PST_MG[piece.piece_type][sq if piece.color == chess.WHITE else mirrored_sq]
+            pst_eg_score = self.PST_EG[piece.piece_type][sq if piece.color == chess.WHITE else mirrored_sq]
+            
+            # Công thức trộn
+            # (Điểm MG * tỷ lệ MG) + (Điểm EG * tỷ lệ EG)
+            pst_score = ((pst_mg_score * phase) + (pst_eg_score * (max_phase - phase))) // max_phase
+            
+            # 3. Cộng/Trừ vào điểm tổng
+            if piece.color == chess.WHITE:
+                score += val + pst_score
+            else:
+                score -= (val + pst_score)
+        
+        return score
 
     def _King_safety_eval(self):
         """Đánh giá độ an toàn của vua"""
@@ -436,9 +591,9 @@ class ChessEngine:
         return net
 
     def _order_moves_improved(self, depth):
-        """Improved ordering: TT best move, MVV-LVA, promotions, killers, history,
-           and penalize captures that SEE says are losing."""
+        """Sắp xếp nước đi sử dụng nhiều heuristic để cải thiện hiệu suất tìm kiếm."""
         moves = list(self.board.legal_moves)
+        my_color = self.board.turn
 
         # TT best move
         key_tt = None
@@ -450,12 +605,20 @@ class ChessEngine:
         except Exception:
             key_tt = None
 
-        # precompute attackers of our pieces for defensive bonuses
-        my_color = self.board.turn
+        # (PRE-COMPUTATION) #
+        # 1. Tính toán tất cả các ô bị tấn công bởi đối phương
         attackers_of_my = set()
+        my_hanging_pieces = set()  # Danh sach moi
         for sq, pc in self.board.piece_map().items():
             if pc.color == my_color:
-                attackers_of_my.update(self.board.attackers(not my_color, sq))
+                attackers = self.board.attackers(not my_color, sq)
+                attackers_of_my.update(attackers)
+                
+                # 2. Logic "is_hanging" dduowc chay 1 lan giam O(phuc tap)
+                if attackers: # neu co quan tan cong
+                    defenders = self.board.attackers(my_color, sq)
+                    if not defenders: # va khong co quan bao ve
+                        my_hanging_pieces.add(sq)
 
         k1, k2 = self.killers.get(depth, [None, None])
 
@@ -473,10 +636,10 @@ class ChessEngine:
             s += self.history.get((m.from_square, m.to_square), 0)
 
             # Defensive bonuses
-            if self.is_hanging(m.from_square):
+            if m.from_square in my_hanging_pieces:
                 s += 600
             if self.board.is_capture(m) and m.to_square in attackers_of_my:
-                s += 1200
+                s += 1200 # thuong co viecj an quan dang bi tan cong
             for atk_sq in attackers_of_my:
                 # moving to square that attacks an attacker
                 if atk_sq in self.board.attacks(m.to_square):
@@ -664,49 +827,53 @@ class ChessEngine:
             self.tt.store(h, depth, flag, min_eval, best_move)
             return min_eval, best_move
 
-    def best_move(self,depth=6,time_limit=5.0): # hehe tang depth de bot khong len tam 5 la no may roi cai con lai la thoi gian bot phan hoi trong khoang time do lay toi uu nhat tinh ra dc
-            """ Test depth = 3–4 thôi.
+    def best_move(self,depth=3,time_limit=5.0):
+          """ dung iterative deepening de tim nuoc di tot nhat trong gioi han thoi gian """
+          start = time.time()
+          self.stop_time = start + time_limit
+          best_move = None
+          best_score = float('-inf')
+          
+          # Reset heuristic cho lượt tìm kiếm mới
+          self.killers.clear()
+          self.history.clear()
+          
+          
+          # Xác định xem chúng ta đang Tối đa hóa (Trắng) hay Tối thiểu hóa (Đen)
+          is_maximizing_player = self.board.turn == chess.WHITE
+          
+          # Đặt điểm số ban đầu cho phù hợp
+          # Nếu là Trắng, tìm +inf. Nếu là Đen, tìm -inf (từ góc nhìn của Trắng)
+          # Nhưng vì hàm minimax sẽ xử lý, chúng ta chỉ cần đặt cho phù hợp
+          best_score = float('-inf') if is_maximizing_player else float('inf')
+          
 
-                Quan sát xem bot có còn “thí quân” không.
-
-                Nếu nó chơi quá bị động → tăng hệ số mobility và center.
-
-                Nếu nó vẫn thí quân → tăng material lên 1.2 hoặc 1.5. """
-                
-            """ dung iterative deepening de tim nuoc di tot nhat trong gioi han thoi gian """
-            start = time.time()
-            self.stop_time = start + time_limit
-            best_move = None
-            best_score = float('-inf')
-            # Reset heuristic cho lượt tìm kiếm mới
-            self.killers.clear()
-            self.history.clear()
-            try:
-                for depth in range(1,depth + 1):
-                    if time.time() - start > time_limit:
-                        break
-                    score_move = None
-                    score, mv = self.minimax_alpha_beta(depth, float('-inf'), float('inf'), True)
-                    if score is None:
-                        break
-                    if mv is not None:
-                        best_move = mv
-                        best_score = score
-                    if abs(best_score) >= 99999:
-                        break
-            finally:
-                self.stop_time = None  # reset timeout
-            return best_move
-
-
-    def is_hanging(self, square):
-        """True nếu ô có quân ta bị tấn công nhưng không được bảo vệ."""
-        piece = self.board.piece_at(square)
-        if not piece:
-            return False
-        attackers = self.board.attackers(not piece.color, square)
-        if not attackers:
-            return False
-        defenders = self.board.attackers(piece.color, square)
-        return len(defenders) == 0
-
+          try:
+            for depth in range(1,depth + 1):
+              if time.time() - start > time_limit:
+                break
+              
+              score, mv = self.minimax_alpha_beta(depth, float('-inf'), float('inf'), is_maximizing_player)
+              
+              if score is None:
+                break # Hết giờ
+              
+              if mv is not None:
+                # Cập nhật điểm số tốt nhất
+                if is_maximizing_player:
+                  if score > best_score:
+                    best_score = score
+                    best_move = mv
+                else:
+                  if score < best_score:
+                    best_score = score
+                    best_move = mv
+              
+              # Kiểm tra chiếu bí
+              if abs(best_score) >= 99999:
+                break
+          finally:
+            self.stop_time = None # reset timeout
+          
+          return best_move           
+ 
