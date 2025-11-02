@@ -36,7 +36,6 @@ class ChessEngine:
         # start position
         self.board = chess.Board()
         # transposition cache (fen, depth, is_maximizing) -> (score, best_move)
-        self.cache = {}
         
         self.piece_values = {
             chess.PAWN: 100,
@@ -139,15 +138,7 @@ class ChessEngine:
             0.90 * threats
         )
         
-        #  dùng để phạt các quân cờ bị ăn (hanging pieces)
-        hang_penalty = 300
-        for sq, pc in self.board.piece_map().items():
-            if pc.color == chess.WHITE:
-                if self.is_hanging(sq):
-                    score -= hang_penalty
-            else:
-                if self.is_hanging(sq):
-                    score += hang_penalty
+
         return int(score)
    
 
@@ -521,7 +512,6 @@ class ChessEngine:
         key = (move.from_square, move.to_square) # tao key tu nuoc di va o den de cap nhat vao history de tang toc do alpha-beta
         self.history[key] += bonus * (2 ** depth) # tang diem cho nuoc di trong history heuristic
     
-    def _order_moves(self): # ham sap xep nuoc di
         """danh sach nuoc di duoc sap xep de tang toc do alpha-beta"""
         moves = list(self.board.legal_moves)
         def key(m):
@@ -539,36 +529,103 @@ class ChessEngine:
         moves.sort(key=key)
         return moves
 
+    def qsearch(self, alpha, beta, is_maximizing):
+        """Tìm kiếm tĩnh (Quiescence Search) để giải quyết hiệu ứng chân trời. Hàm này chỉ xem xét các nước đi "ồn ào" (ăn quân, phong cấp)."""
+    
+        # 1. Kiểm tra timeout (quan trọng)
+        if self.stop_time is not None and time.time() > self.stop_time:
+            return None # Tín hiệu timeout
+
+        # 2. Lấy điểm "Stand-pat" (điểm "đứng yên" nếu không làm gì)
+        # Đây là điểm số nếu người chơi chọn không thực hiện nước đi ồn ào nào.
+        stand_pat_score = self.evaluate_board()
+
+        # 3. Cắt tỉa Alpha-Beta ban đầu
+        if is_maximizing:
+            if stand_pat_score >= beta:
+                return stand_pat_score # Cắt tỉa Beta
+            
+            alpha = max(alpha, stand_pat_score)
+            max_eval = stand_pat_score # Điểm tốt nhất ban đầu là điểm đứng yên
+        else: # is_minimizing
+            if stand_pat_score <= alpha:
+                return stand_pat_score # Cắt tỉa Alpha
+            beta = min(beta, stand_pat_score)
+            min_eval = stand_pat_score # Điểm tốt nhất ban đầu là điểm đứng yên
+
+        # 4. Tạo và sắp xếp các nước đi "ồn ào"
+        # Chỉ lấy nước ăn quân (capture) và phong cấp (promotion)
+        noisy_moves = [m for m in self.board.legal_moves if m.promotion is not None or self.board.is_capture(m)]
+        
+        # Sắp xếp nhanh bằng MVV-LVA (đã có trong _mvv_lva_value)
+        noisy_moves.sort(key=lambda m: -self._mvv_lva_value(m))
+
+        # 5. Duyệt các nước đi ồn ào (Logic tương tự minimax)
+        for move in noisy_moves:
+        # Lọc SEE: Bỏ qua các nước ăn quân rõ ràng là lỗ
+            if self.board.is_capture(move) and self.static_exchange_eval(move) < 0:
+                continue 
+
+            self.board.push(move)
+            # Gọi đệ quy qsearch, lật is_maximizing
+            eval_score = self.qsearch(alpha, beta, not is_maximizing) 
+            self.board.pop()
+
+            if eval_score is None:
+                return None # Lan truyền tín hiệu timeout
+
+        # Cập nhật điểm số
+            if is_maximizing:
+                if eval_score > max_eval:
+                    max_eval = eval_score
+                alpha = max(alpha, eval_score)
+                if alpha >= beta:
+                    break # Cắt tỉa Beta
+            else: # is_minimizing
+                if eval_score < min_eval:
+                    min_eval = eval_score
+                beta = min(beta, eval_score)
+                if alpha >= beta:
+                    break # Cắt tỉa Alpha
+
+        # 6. Trả về điểm số cuối cùng
+        return max_eval if is_maximizing else min_eval
+
     def minimax_alpha_beta(self, depth, alpha, beta, is_maximizing):
         """Minimax với cắt tỉa alpha-beta và bộ nhớ đệm bảng chuyển vị."""
+        
         if self.stop_time is not None and time.time() > self.stop_time:
             return self.evaluate_board(), None
 
-        h = self.zobrist_hash()
-        tt_hit = self.tt.probe(h, depth, alpha, beta)
+        h = self.zobrist_hash() # tinh hash hien tai
+        tt_hit = self.tt.probe(h, depth, alpha, beta) # tra bang TT
+        
+        
+        """ Nếu tìm thấy trong TT, trả về giá trị và nước đi tốt nhất."""
         if tt_hit is not None:
             val, best_move, flag = tt_hit
             return val, best_move
 
-        if depth == 0 or self.board.is_game_over():
+
+        """Nếu trò chơi kết thúc, đánh giá ngay."""
+        if self.board.is_game_over():
             val = self.evaluate_board()
+            return val, None
+
+        """Nếu đạt độ sâu 0, chuyển sang Tìm kiếm Tĩnh (QSearch)."""
+        if depth == 0:
+             # qsearch sẽ trả về điểm số (hoặc None nếu timeout)
+            val = self.qsearch(alpha, beta, is_maximizing) 
+             # qsearch không trả về best_move, chỉ trả về điểm
             return val, None
 
         best_move = None
         alpha_orig, beta_orig = alpha, beta   # <-- giữ giá trị ban đầu
+        
+        """Minimax với cắt tỉa alpha-beta."""
         if is_maximizing:
             max_eval = float('-inf')
             for move in self._order_moves_improved(depth):
-                # thay cho chess.see: simple static-exchange-like filter (không dùng hàm chess.see)
-                if self.board.is_capture(move):
-                    victim = self.board.piece_at(move.to_square)
-                    attacker = self.board.piece_at(move.from_square)
-                    if victim and attacker:
-                        gain = self.piece_values.get(victim.piece_type, 0) - self.piece_values.get(attacker.piece_type, 0)
-                        # bỏ qua những nước ăn gây thiệt hại vật chất ròng
-                        if gain < 0:
-                            continue
-
                 self.board.push(move)
                 eval_score, _ = self.minimax_alpha_beta(depth - 1, alpha, beta, False)
                 self.board.pop()
@@ -623,7 +680,7 @@ class ChessEngine:
             self.tt.store(h, depth, flag, min_eval, best_move)
             return min_eval, best_move
 
-    def best_move(self,depth=3,time_limit=5.0): # hehe tang depth de bot khong len tam 5 la no may roi cai con lai la thoi gian bot phan hoi trong khoang time do lay toi uu nhat tinh ra dc
+    def best_move(self,depth=6,time_limit=5.0): # hehe tang depth de bot khong len tam 5 la no may roi cai con lai la thoi gian bot phan hoi trong khoang time do lay toi uu nhat tinh ra dc
             """ Test depth = 3–4 thôi.
 
                 Quan sát xem bot có còn “thí quân” không.
@@ -637,7 +694,9 @@ class ChessEngine:
             self.stop_time = start + time_limit
             best_move = None
             best_score = float('-inf')
-            
+            # Reset heuristic cho lượt tìm kiếm mới
+            self.killers.clear()
+            self.history.clear()
             try:
                 for depth in range(1,depth + 1):
                     if time.time() - start > time_limit:
@@ -654,6 +713,7 @@ class ChessEngine:
             finally:
                 self.stop_time = None  # reset timeout
             return best_move
+
 
     def is_hanging(self, square):
         """True nếu ô có quân ta bị tấn công nhưng không được bảo vệ."""
