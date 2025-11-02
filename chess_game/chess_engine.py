@@ -47,12 +47,12 @@ class ChessEngine:
         }
         
         self.mobility_weights = {
-            chess.PAWN: 0.05,
-            chess.KNIGHT: 0.2,
-            chess.BISHOP: 0.2,
-            chess.ROOK: 0.25,
-            chess.QUEEN: 0.15,
-            chess.KING: 0.05
+            chess.PAWN: 1, # Tốt có 1-2 nước đi
+            chess.KNIGHT: 4, # Ngựa có 8 nước đi -> 32 điểm
+            chess.BISHOP: 4, # Tượng có 13 nước đi -> 52 điểm
+            chess.ROOK: 3, # Xe có 14 nước đi -> 42 điểm
+            chess.QUEEN: 2, # Hậu có 27 nước đi -> 54 điểm
+            chess.KING: 1 # Vua có 8 nước đi -> 8 điểm
         }
         
         self.PST = self.__init___piece_square_tables()
@@ -125,17 +125,17 @@ class ChessEngine:
         pawn_struct = self._pawn_structure_eval()
         center = self._center_control_eval()
         king_safety = self._King_safety_eval()
-        threats = self._threats_eval()
+        # threats = self._threats_eval()
         
         # dùng trọng số để diều chỉnh và tái cấu trúc ảnh hưởng của các quân cờ vì nếu không thì máy sẽ ưu tiên phát triển trung tâm và khai mở vua hơn cả việc mất Ngựa :) điên vl
        
         score = (
-            3.0 * material + 
-            0.20 * mobility +
-            0.30 * pawn_struct +
-            0.10 * center +
-            0.90 * king_safety +
-            0.90 * threats
+            material + 
+            mobility +
+            pawn_struct +
+            center +
+            king_safety 
+            # 0.90 * threats
         )
         
 
@@ -511,23 +511,7 @@ class ChessEngine:
         """Cập nhật bảng lịch sử cho nước đi"""
         key = (move.from_square, move.to_square) # tao key tu nuoc di va o den de cap nhat vao history de tang toc do alpha-beta
         self.history[key] += bonus * (2 ** depth) # tang diem cho nuoc di trong history heuristic
-    
-        """danh sach nuoc di duoc sap xep de tang toc do alpha-beta"""
-        moves = list(self.board.legal_moves)
-        def key(m):
-            # capture or promotion => high priority
-            score = 0
-            if self.board.is_capture(m):
-                score += 100
-                # prefer captures of high-value pieces
-                to_piece = self.board.piece_at(m.to_square)
-                if to_piece:
-                    score += {chess.PAWN:10, chess.KNIGHT:30, chess.BISHOP:30, chess.ROOK:50, chess.QUEEN:90}.get(to_piece.piece_type,0)
-            if m.promotion:
-                score += 80
-            return -score  # negative because we sort ascending
-        moves.sort(key=key)
-        return moves
+
 
     def qsearch(self, alpha, beta, is_maximizing):
         """Tìm kiếm tĩnh (Quiescence Search) để giải quyết hiệu ứng chân trời. Hàm này chỉ xem xét các nước đi "ồn ào" (ăn quân, phong cấp)."""
