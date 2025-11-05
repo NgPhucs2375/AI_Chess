@@ -1,6 +1,11 @@
+import sys, os
+sys.path.append(os.path.dirname(__file__))
+
 import pygame
 from chess_gui import ChessGUI
 from chess_engine import ChessEngine
+
+
 
 # Main function to run the chess game
 def main():

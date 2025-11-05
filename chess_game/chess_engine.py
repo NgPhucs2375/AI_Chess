@@ -4,6 +4,7 @@ import random
 import collections 
 from collections import defaultdict
 
+
 class TranspositionTable:
     """Lop bang luu cac trang thai da danh gia de tang toc do."""
     """Gom : Exact,Lower, Upper"""
@@ -37,7 +38,55 @@ class ChessEngine:
         print("--- 100% ĐANG CHẠY CODE ENGINE MỚI NHẤT! ---")
         # start position
         self.board = chess.Board()
+        self.state = None
         # transposition cache (fen, depth, is_maximizing) -> (score, best_move)
+# ...existing code...
+class ChessEngine:
+    def __init__(self):
+        print("--- 100% ĐANG CHẠY CODE ENGINE MỚI NHẤT! ---")
+        # start position
+        self.board = chess.Board()
+        self.state = None
+
+        # --- Khởi tạo mặc định cho engine (tránh AttributeError khi gọi best_move) ---
+        # Giá trị cơ bản cho các quân
+        self.piece_values = {
+            chess.PAWN: 100,
+            chess.KNIGHT: 320,
+            chess.BISHOP: 330,
+            chess.ROOK: 500,
+            chess.QUEEN: 900,
+            chess.KING: 20000
+        }
+        # Trọng số mobility mặc định
+        self.mobility_weights = {
+            chess.PAWN: 1,
+            chess.KNIGHT: 4,
+            chess.BISHOP: 4,
+            chess.ROOK: 3,
+            chess.QUEEN: 2,
+            chess.KING: 1
+        }
+        # PSTs, zobrist, transposition table, killer/history, timeout
+        try:
+            self.__init___piece_square_tables()
+        except Exception:
+            # nếu có lỗi lúc khởi tạo PST thì bỏ qua nhưng tiếp tục khởi tạo các cấu trúc khác
+            pass
+        self._init_zobrist()
+        self.tt = TranspositionTable()
+        self.killers = defaultdict(lambda: [None, None])
+        self.history = defaultdict(int)
+        self.stop_time = None
+    # ...existing code...
+    def setup_buttons(self):
+        # import local để tránh circular import khi module được import lúc khởi động
+        from chess_button import ButtonManager
+        self.buttons = ButtonManager(self)
+
+    def use_buttons(self):
+        if not hasattr(self, "buttons"):
+            self.setup_buttons()
         
         self.piece_values = {
             chess.PAWN: 100,

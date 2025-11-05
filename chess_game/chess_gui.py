@@ -2,6 +2,7 @@ import pygame
 import os
 import chess
 from chess_engine import ChessEngine
+from chess_button import ButtonManager
 
 WIDTH, HEIGHT = 640, 640
 ROWS, COLS = 8, 8
