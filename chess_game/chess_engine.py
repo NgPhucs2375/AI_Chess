@@ -78,45 +78,10 @@ class ChessEngine:
         self.killers = defaultdict(lambda: [None, None])
         self.history = defaultdict(int)
         self.stop_time = None
-    # ...existing code...
-    def setup_buttons(self):
-        # import local để tránh circular import khi module được import lúc khởi động
-        from chess_button import ButtonManager
-        self.buttons = ButtonManager(self)
 
-    def use_buttons(self):
-        if not hasattr(self, "buttons"):
-            self.setup_buttons()
-        
-        self.piece_values = {
-            chess.PAWN: 100,
-            chess.KNIGHT: 320,
-            chess.BISHOP: 330,
-            chess.ROOK: 500,
-            chess.QUEEN: 900,
-            chess.KING: 20000
-        }
-        
-        self.mobility_weights = {
-            chess.PAWN: 1, # Tốt có 1-2 nước đi
-            chess.KNIGHT: 4, # Ngựa có 8 nước đi -> 32 điểm
-            chess.BISHOP: 4, # Tượng có 13 nước đi -> 52 điểm
-            chess.ROOK: 3, # Xe có 14 nước đi -> 42 điểm
-            chess.QUEEN: 2, # Hậu có 27 nước đi -> 54 điểm
-            chess.KING: 1 # Vua có 8 nước đi -> 8 điểm
-        }
-        
-        self.__init___piece_square_tables()
-        
-        # zobrist + TT + killer + history 
-        self._init_zobrist()
-        self.tt = TranspositionTable()
-        self.killers = defaultdict(lambda: [None, None])  # two killer moves per depth
-        self.history = defaultdict(int)  # history heuristic
-        
-        # timout control 
-        self.stop_time = None
+       
 
+  
     def print_board(self):
         print(self.board)
 
@@ -827,7 +792,7 @@ class ChessEngine:
                 self.board.pop()
                 
                 if eval_score is None:
-                    return None, None  # timeout occurred in deeper call
+                    return None, None 
                 
                 if eval_score > max_eval:
                     max_eval = eval_score
@@ -838,7 +803,6 @@ class ChessEngine:
                         self._record_killer(move, depth)
                         self._record_history(move, depth, bonus=1)
                     break
-            # store in TT: dùng alpha_orig/beta_orig để quyết flag
             if max_eval <= alpha_orig:
                 flag = 'UPPER'
             elif max_eval >= beta_orig:
@@ -855,7 +819,7 @@ class ChessEngine:
                 self.board.pop()
                 
                 if eval_score is None:
-                    return None, None  # timeout occurred in deeper call
+                    return None, None  
                 
                 if eval_score < min_eval:
                     min_eval = eval_score
@@ -866,7 +830,6 @@ class ChessEngine:
                         self._record_killer(move, depth)
                         self._record_history(move, depth, bonus=1)
                     break
-            # store in TT: dùng alpha_orig/beta_orig để quyết flag
             if min_eval <= alpha_orig:
                 flag = 'UPPER'
             elif min_eval >= beta_orig:

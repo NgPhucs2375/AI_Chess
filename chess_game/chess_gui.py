@@ -2,7 +2,6 @@ import pygame
 import os
 import chess
 from chess_engine import ChessEngine
-from chess_button import ButtonManager
 
 WIDTH, HEIGHT = 640, 640
 ROWS, COLS = 8, 8
@@ -33,8 +32,7 @@ class ChessGUI: # class giao dien nguoi dung
         self.screen = pygame.display.set_mode((WIDTH, HEIGHT)) # tạo cửa sổ pygame với kích thước WIDTH x HEIGHT
         self.running = True # biến chạy vòng lặp chính
         self.engine = ChessEngine() # Khởi tạo engine cờ vua 
-        self.selected_square = None # oo ô vuông được chọn
-        self.selected_square = None # o vuong duoc chon
+        self.selected_square = None # ô vuông được chọn
         self.legal_moves = []   # danh sach nuoc di hop le cho o duoc chon
 
            # --- phong quân ---
