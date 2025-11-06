@@ -17,16 +17,12 @@ class TranspositionTable:
         if current is None or depth >= current[0]:
             self.table[key] = (depth,flag,score,best_move)
             
-    def probe(self,key,depth,alpha,beta,engine_instance=None):
+    def probe(self,key,depth,alpha,beta):
         """Tra TT de xem co the su dung ket qua truoc do khong."""
         entry = self.table.get(key)
         if entry is None:
             return None
         edepth,flag,val,mmove = entry
-        
-        if engine_instance:
-            engine_instance.tt_hits += 1
-        
         if edepth < depth:
             return None # Do sau khong du lon
             
@@ -42,17 +38,59 @@ class ChessEngine:
     def __init__(self):
         print("--- 100% ĐANG CHẠY CODE ENGINE MỚI NHẤT! ---")
         self.board = chess.Board()
+<<<<<<< HEAD
+        self.state = None
+        # transposition cache (fen, depth, is_maximizing) -> (score, best_move)
+# ...existing code...
+class ChessEngine:
+    def __init__(self):
+        print("--- 100% ĐANG CHẠY CODE ENGINE MỚI NHẤT! ---")
+        # start position
+        self.board = chess.Board()
+        self.state = None
 
+        # --- Khởi tạo mặc định cho engine (tránh AttributeError khi gọi best_move) ---
+        # Giá trị cơ bản cho các quân
+        self.piece_values = {
+            chess.PAWN: 100,
+            chess.KNIGHT: 320,
+            chess.BISHOP: 330,
+=======
         
         # --- ĐIỂM VẬT CHẤT CHUYÊN NGHIỆP ---
         self.piece_values = {
             chess.PAWN: 100,
             chess.KNIGHT: 320,
             chess.BISHOP: 330, 
+>>>>>>> 59e5bb0211a5439fe5e6b86d0c237a643da06846
             chess.ROOK: 500,
             chess.QUEEN: 900,
             chess.KING: 20000
         }
+<<<<<<< HEAD
+        # Trọng số mobility mặc định
+        self.mobility_weights = {
+            chess.PAWN: 1,
+            chess.KNIGHT: 4,
+            chess.BISHOP: 4,
+            chess.ROOK: 3,
+            chess.QUEEN: 2,
+            chess.KING: 1
+        }
+        # PSTs, zobrist, transposition table, killer/history, timeout
+        try:
+            self.__init___piece_square_tables()
+        except Exception:
+            # nếu có lỗi lúc khởi tạo PST thì bỏ qua nhưng tiếp tục khởi tạo các cấu trúc khác
+            pass
+        self._init_zobrist()
+        self.tt = TranspositionTable()
+        self.killers = defaultdict(lambda: [None, None])
+        self.history = defaultdict(int)
+        self.stop_time = None
+
+       
+=======
         
         # --- ĐIỂM THƯỞNG CẶP QUÂN ---
         self.BISHOP_PAIR_BONUS = 50 
@@ -74,12 +112,7 @@ class ChessEngine:
         self.history = defaultdict(int) 
         
         self.stop_time = None
-        # --- METRICS (ĐO LƯỜNG) ---
-        self.nodes_searched = 0
-        self.tt_hits = 0
-        self.last_completed_depth = 0
-        # ------------------------
-
+>>>>>>> 59e5bb0211a5439fe5e6b86d0c237a643da06846
 
   
     def print_board(self):
@@ -632,7 +665,6 @@ class ChessEngine:
 
     def qsearch(self, alpha, beta, is_maximizing):
         """Tìm kiếm tĩnh (Quiescence Search)"""
-        self.nodes_searched += 1
     
         if self.stop_time is not None and time.time() > self.stop_time:
             return None 
@@ -683,7 +715,6 @@ class ChessEngine:
     # =========================================================
     def minimax_pure(self, depth, is_maximizing):
         """Minimax cổ điển (không Alpha-Beta, không TT)."""
-        self.nodes_searched += 1
         # Kiểm tra thời gian dừng
         if self.stop_time is not None and time.time() > self.stop_time:
             return None, None 
@@ -709,7 +740,8 @@ class ChessEngine:
                 self.board.pop()
                 
                 if eval_score is None:
-
+<<<<<<< HEAD
+=======
                     return None, None
                 # Cập nhật điểm tối đa và nước đi tốt nhất
                 if eval_score > max_eval:
@@ -739,7 +771,6 @@ class ChessEngine:
     # =========================================================
     def minimax_full(self, depth, alpha, beta, is_maximizing):
         """Minimax với cắt tỉa Alpha-Beta và tất cả kỹ thuật nâng cao (TT, Killers, History)."""
-        self.nodes_searched += 1
         
         if self.stop_time is not None and time.time() > self.stop_time:
             return None, None 
@@ -775,6 +806,7 @@ class ChessEngine:
                 self.board.pop()
                 
                 if eval_score is None:
+>>>>>>> 59e5bb0211a5439fe5e6b86d0c237a643da06846
                     return None, None 
                 
                 if eval_score > max_eval:
@@ -786,10 +818,13 @@ class ChessEngine:
                         self._record_killer(move, depth)
                         self._record_history(move, depth, bonus=1)
                     break
-
+<<<<<<< HEAD
+=======
             
             if best_move is None: 
                 return max_eval, None 
+
+>>>>>>> 59e5bb0211a5439fe5e6b86d0c237a643da06846
             if max_eval <= alpha_orig:
                 flag = 'UPPER'
             elif max_eval >= beta_orig:
@@ -807,7 +842,12 @@ class ChessEngine:
                 self.board.pop()
                 
                 if eval_score is None:
+<<<<<<< HEAD
+                    return None, None  
+=======
                     return None, None 
+>>>>>>> 59e5bb0211a5439fe5e6b86d0c237a643da06846
+                
                 if eval_score < min_eval:
                     min_eval = eval_score
                     best_move = move
@@ -817,8 +857,12 @@ class ChessEngine:
                         self._record_killer(move, depth)
                         self._record_history(move, depth, bonus=1)
                     break
+<<<<<<< HEAD
+=======
+            
             if best_move is None:
                 return min_eval, None
+>>>>>>> 59e5bb0211a5439fe5e6b86d0c237a643da06846
             if min_eval <= alpha_orig:
                 flag = 'UPPER'
             elif min_eval >= beta_orig:
@@ -835,72 +879,49 @@ class ChessEngine:
         legal_moves = list(self.board.legal_moves)
         if not legal_moves:
             return None
-        
-        start_time = time.time() 
-        self.stop_time = start_time + time_limit
-        last_safe_move = random.choice(legal_moves) 
-        
-        # --- RESET TOÀN BỘ SỐ LIỆU ---
-        self.killers.clear()
-        self.history.clear()
-        self.nodes_searched = 0
-        self.tt_hits = 0
-        self.last_completed_depth = 0
-        # ------------------------------
+            
+        start = time.time()
+        self.stop_time = start + time_limit
+        last_safe_move = random.choice(legal_moves) # Nước đi an toàn khởi tạo
         
         is_maximizing_player = self.board.turn == chess.WHITE
         
         if mode == 'minimax_pure':
-        # CẤP ĐỘ DỄ:
+            # CẤP ĐỘ DỄ: Chỉ chạy Minimax thuần túy một lần ở độ sâu tối đa
             score, mv = self.minimax_pure(depth, is_maximizing_player)
             if mv is not None:
-                self.last_completed_depth = depth
-                last_safe_move = mv
-            # (Chúng ta sẽ in số liệu ở cuối)
+                #vị trí 1: In điểm số cho mỗi độ sâu hoàn thành (Dễ)
+                print(f"DEBUG (EASY MODE): Depth={depth}, Move={mv.uci()}, Score={score}")
+                return mv
+            return last_safe_move
 
-        else: 
-        # CẤP ĐỘ TRUNG BÌNH/KHÓ:
-            best_score_so_far = float('-inf') if is_maximizing_player else float('inf')
-            
-            try:
-                for current_depth in range(1, depth + 1):
-                    if time.time() >= self.stop_time:
-                        break
-            
-                    score, mv = self.minimax_full(current_depth, float('-inf'), float('inf'), is_maximizing_player)
+        # CẤP ĐỘ TRUNG BÌNH/KHÓ: MINIMAX + ALPHA-BETA + ID
+        self.killers.clear()
+        self.history.clear()
+        best_score_so_far = float('-inf') if is_maximizing_player else float('inf')
+        
+        try:
+            for current_depth in range(1, depth + 1):
+                if time.time() >= self.stop_time:
+                    break
                 
-                    if score is None: # Bị timeout
-                        break 
+                # Gọi hàm minimax_full
+                score, mv = self.minimax_full(current_depth, float('-inf'), float('inf'), is_maximizing_player)
+                
+                if score is None:
+                    break 
 
-                    # Nếu không timeout, lưu độ sâu này lại
-                    self.last_completed_depth = current_depth
-                    print(f"DEBUG: Hoan thanh Depth={current_depth}, Move={mv.uci() if mv else 'None'}, Score={score}")
-
-                    if mv is not None:
-                        if (is_maximizing_player and score >= best_score_so_far) or \
-                            (not is_maximizing_player and score <= best_score_so_far):
-                            best_score_so_far = score
-                            last_safe_move = mv 
+                if mv is not None:
+                    if (is_maximizing_player and score >= best_score_so_far) or \
+                       (not is_maximizing_player and score <= best_score_so_far):
+                        best_score_so_far = score
+                        last_safe_move = mv 
+                # VỊ TRÍ 2: In điểm số cho mỗi độ sâu hoàn thành (Trung bình/Khó)
+                    print(f"DEBUG: Depth={current_depth}, Move={mv.uci()}, Score={score}")
+                if abs(best_score_so_far) >= 99999:
+                    break
                     
-                    if abs(best_score_so_far) >= 99999:
-                        break
-            
-            finally:
-                self.stop_time = None 
-        
-        # --- IN BẢNG SỐ LIỆU CUỐI CÙNG ---
-        total_time = time.time() - start_time
-        nps = int(self.nodes_searched / total_time) if total_time > 0 else 0
-        
-        print("\n--- KET QUA TEST ---")
-        print(f"Mode Duoc Chon: {mode}")
-        print(f"Thoi gian chay: {total_time:.2f}s (Gioi han: {time_limit}s)")
-        print(f"Depth Dat Duoc: {self.last_completed_depth}")
-        print(f"Tong The Co (Nodes): {self.nodes_searched}")
-        print(f"The Co / giay (NPS): {nps}")
-        print(f"Tra 'Bo Nho' (TT Hits): {self.tt_hits}")
-        print(f"Nuoc Di Duoc Chon: {last_safe_move.uci() if last_safe_move else 'None'}")
-        print("--------------------\n")
-        # ---------------------------------
+        finally:
+            self.stop_time = None 
         
         return last_safe_move

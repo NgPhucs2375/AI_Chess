@@ -4,9 +4,7 @@ from chess_gui import ChessGUI
 
 # Main function to run the chess game
 def main():
-    """
-    Initializes Pygame, sets up the game window, creates and runs the ChessGUI instance.
-    """
+    """Hàm main() để khởi động trò chơi cờ vua"""
     # Pygame.init() và set_caption đã được chuyển vào ChessGUI.__init__()
     
     # 3. Khởi tạo giao diện cờ vua 

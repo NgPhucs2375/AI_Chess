@@ -1,12 +1,8 @@
 import pygame
 import os
+import sys
 import chess
-<<<<<<< HEAD
-from chess_engine import ChessEngine
-=======
 from chess_engine import ChessEngine 
-import sys # Thêm import sys để thoát game
->>>>>>> 59e5bb0211a5439fe5e6b86d0c237a643da06846
 
 # Kích thước cố định cho BÀN CỜ
 WIDTH, HEIGHT = 640, 640
@@ -53,13 +49,7 @@ except pygame.error as e:
 class ChessGUI:
     def __init__(self):
         """Khởi tạo giao diện cờ vua"""
-<<<<<<< HEAD
-        self.screen = pygame.display.set_mode((WIDTH, HEIGHT)) # tạo cửa sổ pygame với kích thước WIDTH x HEIGHT
-        self.running = True # biến chạy vòng lặp chính
-        self.engine = ChessEngine() # Khởi tạo engine cờ vua 
-        self.selected_square = None # ô vuông được chọn
-        self.legal_moves = []   # danh sach nuoc di hop le cho o duoc chon
-=======
+
         pygame.init() 
         self.screen = pygame.display.set_mode((TOTAL_WIDTH, TOTAL_HEIGHT)) 
         pygame.display.set_caption("Game Cờ Vua - Python Form Team 2")
@@ -88,7 +78,7 @@ class ChessGUI:
         except pygame.error:
             # Nếu không tìm thấy, cố gắng tạo bảng thay thế
             self.board_texture = self._create_fallback_board()
->>>>>>> 59e5bb0211a5439fe5e6b86d0c237a643da06846
+
 
         self.control_rect = pygame.Rect(WIDTH, 0, CONTROL_WIDTH, TOTAL_HEIGHT)
         self.button_rects = {}
