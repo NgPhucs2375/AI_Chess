@@ -4,27 +4,28 @@ import random
 import collections 
 from collections import defaultdict
 
-
 class TranspositionTable:
-    """Lop bang luu cac trang thai da danh gia de tang toc do."""
-    """Gom : Exact,Lower, Upper"""
+    """Lop bang luu cac trang thai da danh gia de tang toc do.
+    Gom : Exact,Lower, Upper"""
     def __init__(self):
         self.table = {}
     
     def store(self,key,depth,flag,score,best_move):
         current = self.table.get(key)
         
-        # giu lai entry tot hon
+        # giu lai entry tot hon (tie-breaking: prefer deeper searches)
         if current is None or depth >= current[0]:
             self.table[key] = (depth,flag,score,best_move)
             
     def probe(self,key,depth,alpha,beta):
+        """Tra TT de xem co the su dung ket qua truoc do khong."""
         entry = self.table.get(key)
         if entry is None:
             return None
         edepth,flag,val,mmove = entry
         if edepth < depth:
-            return None
+            return None # Do sau khong du lon
+            
         if flag == 'EXACT':
             return val, mmove,flag
         if flag == 'LOWER' and val >= beta:
@@ -36,85 +37,37 @@ class TranspositionTable:
 class ChessEngine:
     def __init__(self):
         print("--- 100% ĐANG CHẠY CODE ENGINE MỚI NHẤT! ---")
-        # start position
         self.board = chess.Board()
-        self.state = None
-        # transposition cache (fen, depth, is_maximizing) -> (score, best_move)
-# ...existing code...
-class ChessEngine:
-    def __init__(self):
-        print("--- 100% ĐANG CHẠY CODE ENGINE MỚI NHẤT! ---")
-        # start position
-        self.board = chess.Board()
-        self.state = None
-
-        # --- Khởi tạo mặc định cho engine (tránh AttributeError khi gọi best_move) ---
-        # Giá trị cơ bản cho các quân
-        self.piece_values = {
-            chess.PAWN: 100,
-            chess.KNIGHT: 320,
-            chess.BISHOP: 330,
-            chess.ROOK: 500,
-            chess.QUEEN: 900,
-            chess.KING: 20000
-        }
-        # Trọng số mobility mặc định
-        self.mobility_weights = {
-            chess.PAWN: 1,
-            chess.KNIGHT: 4,
-            chess.BISHOP: 4,
-            chess.ROOK: 3,
-            chess.QUEEN: 2,
-            chess.KING: 1
-        }
-        # PSTs, zobrist, transposition table, killer/history, timeout
-        try:
-            self.__init___piece_square_tables()
-        except Exception:
-            # nếu có lỗi lúc khởi tạo PST thì bỏ qua nhưng tiếp tục khởi tạo các cấu trúc khác
-            pass
-        self._init_zobrist()
-        self.tt = TranspositionTable()
-        self.killers = defaultdict(lambda: [None, None])
-        self.history = defaultdict(int)
-        self.stop_time = None
-    # ...existing code...
-    def setup_buttons(self):
-        # import local để tránh circular import khi module được import lúc khởi động
-        from chess_button import ButtonManager
-        self.buttons = ButtonManager(self)
-
-    def use_buttons(self):
-        if not hasattr(self, "buttons"):
-            self.setup_buttons()
         
+        # --- ĐIỂM VẬT CHẤT CHUYÊN NGHIỆP ---
         self.piece_values = {
             chess.PAWN: 100,
             chess.KNIGHT: 320,
-            chess.BISHOP: 330,
+            chess.BISHOP: 330, 
             chess.ROOK: 500,
             chess.QUEEN: 900,
             chess.KING: 20000
         }
         
+        # --- ĐIỂM THƯỞNG CẶP QUÂN ---
+        self.BISHOP_PAIR_BONUS = 50 
+        
         self.mobility_weights = {
-            chess.PAWN: 1, # Tốt có 1-2 nước đi
-            chess.KNIGHT: 4, # Ngựa có 8 nước đi -> 32 điểm
-            chess.BISHOP: 4, # Tượng có 13 nước đi -> 52 điểm
-            chess.ROOK: 3, # Xe có 14 nước đi -> 42 điểm
-            chess.QUEEN: 2, # Hậu có 27 nước đi -> 54 điểm
-            chess.KING: 1 # Vua có 8 nước đi -> 8 điểm
+            chess.PAWN: 1, 
+            chess.KNIGHT: 4, 
+            chess.BISHOP: 4, 
+            chess.ROOK: 3, 
+            chess.QUEEN: 2, 
+            chess.KING: 1 
         }
         
-        self.__init___piece_square_tables()
+        self._init_piece_square_tables()
         
-        # zobrist + TT + killer + history 
         self._init_zobrist()
         self.tt = TranspositionTable()
-        self.killers = defaultdict(lambda: [None, None])  # two killer moves per depth
-        self.history = defaultdict(int)  # history heuristic
+        self.killers = defaultdict(lambda: [None, None]) 
+        self.history = defaultdict(int) 
         
-        # timout control 
         self.stop_time = None
 
     def print_board(self):
@@ -159,7 +112,7 @@ class ChessEngine:
             h ^= self.zobrist_ep[f]
         return h
         
-            
+        
     #---------------------------------------
     # 1. EVALUATION ENTRY POINT
     #---------------------------------------
@@ -168,56 +121,61 @@ class ChessEngine:
         # Kiểm tra trạng thái kết thúc trò chơi
         if self.board.is_checkmate():
             return -99999 if self.board.turn == chess.WHITE else 99999
-        if self.board.is_stalemate() or self.board.is_insufficient_material():
+        # Xử lý các trường hợp hòa: Tuyệt đối không thay đổi dòng này.
+        if self.board.is_stalemate() or self.board.is_insufficient_material() or self.board.is_fifty_moves() or self.board.is_repetition():
             return 0
 
-        # Lấy giai đoạn ván cờ MỘT LẦN
         game_phase = self._get_game_phase_taper()
-        
-        # Chỉ đánh giá an toàn Vua (lá chắn Tốt) nếu đang ở Trung cuộc
-        # (ví dụ: phase > 4, tức là chưa phải tàn cuộc hoàn toàn)
-        if game_phase > 4:
-            king_safety = self._King_safety_eval()
-        else:
-            king_safety = 0 # ở tàn cuộc, không cần lá chắn Tốt.
             
-            
+        material_pst = self._material_eval() # Bao gồm vật chất và PST
         
-        
-        material = self._material_eval()
-        mobility = self._mobility_eval()
+        # Bổ sung các yếu tố đánh giá chuyên nghiệp
+        bishop_pair = self._bishop_pair_eval() # Điểm cặp Tượng
+        mobility = self._mobility_eval() 
         pawn_struct = self._pawn_structure_eval()
         center = self._center_control_eval()
-        # king_safety = self._King_safety_eval()
-        # threats = self._threats_eval()
+        king_safety = self._king_safety_eval() 
         
-        # dùng trọng số để diều chỉnh và tái cấu trúc ảnh hưởng của các quân cờ vì nếu không thì máy sẽ ưu tiên phát triển trung tâm và khai mở vua hơn cả việc mất Ngựa :) điên vl
-       
+        # Áp dụng Tapering cho King Safety (chỉ quan trọng ở Trung cuộc)
+        max_phase = 24
+        # King safety chỉ áp dụng nếu game chưa quá tàn cuộc
+        tapered_king_safety = (king_safety * game_phase) // max_phase if game_phase > 4 else 0
+
         score = (
-            material + 
+            material_pst + 
+            bishop_pair +
             mobility +
             pawn_struct +
             center +
-            king_safety 
-            # 0.90 * threats
+            tapered_king_safety 
         )
         
-
         return int(score)
-   
-
     
-
-
+    # --- PHƯƠNG THỨC BỔ SUNG ĐIỂM CẶP TƯỢNG ---
+    def _bishop_pair_eval(self):
+        """Thưởng điểm cho việc sở hữu cặp Tượng (Bishop Pair)."""
+        score = 0
+        
+        white_bishops = len(self.board.pieces(chess.BISHOP, chess.WHITE))
+        black_bishops = len(self.board.pieces(chess.BISHOP, chess.BLACK))
+        
+        if white_bishops >= 2:
+            score += self.BISHOP_PAIR_BONUS
+        if black_bishops >= 2:
+            score -= self.BISHOP_PAIR_BONUS
+            
+        return score
+    
+    # --- PSTS, MOBILITY, PAWN STRUCTURE, KING SAFETY (GIỮ NGUYÊN) ---
 
     def _mobility_eval(self):
         """Đánh giá khả năng di chuyển của các quân cờ"""
         score = 0
         for sq,piece in self.board.piece_map().items():
-            # Bỏ qua Tốt, vì 'attacks' của Tốt không phải là 'moves'
-            # Độ cơ động của Tốt đã được xử lý trong PST và pawn_structure_eval
             if piece.piece_type == chess.PAWN:
                 continue
+            
             attacks = len(self.board.attacks(sq))
             w = self.mobility_weights.get(piece.piece_type, 0)
             
@@ -228,49 +186,45 @@ class ChessEngine:
         return score
 
     def _pawn_structure_eval(self):
-        """Đánh giá cấu trúc tốt của các con tốt (Đã sửa lỗi và tối ưu hóa)."""
+        """Đánh giá cấu trúc tốt (Doubled, Isolated, Passed, Protected)."""
         score = 0
         
-        # Lấy tất cả các quân Tốt một lần
         white_pawns = set(self.board.pieces(chess.PAWN, chess.WHITE))
         black_pawns = set(self.board.pieces(chess.PAWN, chess.BLACK))
         
-        # Tạo các đối tượng Piece để so sánh (hiệu quả hơn)
         white_pawn_piece = chess.Piece(chess.PAWN, chess.WHITE)
         black_pawn_piece = chess.Piece(chess.PAWN, chess.BLACK)
 
-        # Lấy danh sách các cột Tốt
         pawn_files_white = [chess.square_file(sq) for sq in white_pawns]
         pawn_files_black = [chess.square_file(sq) for sq in black_pawns]
         
-        # 1. Xử lý Tốt Chồng (Doubled) - Hiệu suất cao O(N)
+        # 1. Xử lý Tốt Chồng (Doubled)
         doubled_penalty = 25
         white_file_counts = collections.Counter(pawn_files_white)
         black_file_counts = collections.Counter(pawn_files_black)
         
         for count in white_file_counts.values():
             if count > 1:
-                score -= doubled_penalty * (count - 1) # Phạt mỗi Tốt *thêm*
+                score -= doubled_penalty * (count - 1)
         
         for count in black_file_counts.values():
             if count > 1:
                 score += doubled_penalty * (count - 1)
         
-        # 2. Xử lý Tốt Cô Lập (Isolated) - Hiệu suất cao O(N)
+        # 2. Xử lý Tốt Cô Lập (Isolated)
         isolated_penalty = 20
         white_file_set = set(pawn_files_white)
         black_file_set = set(pawn_files_black)
         
         for f in white_file_set:
             if (f - 1) not in white_file_set and (f + 1) not in white_file_set:
-                # Tốt trên cột 'f' bị cô lập. Phạt cho TẤT CẢ Tốt trên cột đó.
                 score -= isolated_penalty * white_file_counts[f]
         
         for f in black_file_set:
             if (f - 1) not in black_file_set and (f + 1) not in black_file_set:
                 score += isolated_penalty * black_file_counts[f]
 
-        # Hàm is_passed (giữ nguyên logic, nhưng dùng set)
+        # Hàm is_passed
         def is_passed(sq, color, my_pawns, enemy_pawns):
             f = chess.square_file(sq)
             r = chess.square_rank(sq)
@@ -278,71 +232,74 @@ class ChessEngine:
             for ep in enemy_pawns:
                 ef = chess.square_file(ep)
                 er = chess.square_rank(ep)
-                # Nếu Tốt địch ở cột liền kề hoặc cùng cột
                 if abs(ef - f) <= 1:
-                    # Và Tốt địch ở phía trước
                     if (color == chess.WHITE and er > r) or (color == chess.BLACK and er < r):
                         return False
-        return True
+            return True
 
         # 3. Xử lý Tốt Thông (Passed) và Tốt Được Bảo Vệ (Protected)
         passed_bonus = 25
-        protected_bonus = 10 # Thưởng điểm mới
+        protected_bonus = 10 
 
         for sq in white_pawns:
-        # Kiểm tra Tốt thông
             if is_passed(sq, chess.WHITE, white_pawns, black_pawns):
-                score += passed_bonus
+                rank = chess.square_rank(sq)
+                score += passed_bonus + (rank - 1) * 15 
         
-        # Kiểm tra Tốt được bảo vệ
             r = chess.square_rank(sq)
             f = chess.square_file(sq)
-            if r > 0: # Không thể là Tốt ở hàng 1
+            if r > 0: 
                 if f > 0 and self.board.piece_at(chess.square(f - 1, r - 1)) == white_pawn_piece:
                     score += protected_bonus
                 if f < 7 and self.board.piece_at(chess.square(f + 1, r - 1)) == white_pawn_piece:
                     score += protected_bonus
-    
-        for sq in black_pawns:
-            # Kiểm tra Tốt thông
-            if is_passed(sq, chess.BLACK, black_pawns, white_pawns):
-                score -= passed_bonus
         
-            # Kiểm tra Tốt được bảo vệ
+        for sq in black_pawns:
+            if is_passed(sq, chess.BLACK, black_pawns, white_pawns):
+                rank = chess.square_rank(sq)
+                score -= (passed_bonus + (6 - rank) * 15) 
+        
             r = chess.square_rank(sq)
             f = chess.square_file(sq)
-            if r < 7: # Không thể là Tốt ở hàng 8
+            if r < 7: 
                 if f > 0 and self.board.piece_at(chess.square(f - 1, r + 1)) == black_pawn_piece:
                     score -= protected_bonus
                 if f < 7 and self.board.piece_at(chess.square(f + 1, r + 1)) == black_pawn_piece:
                     score -= protected_bonus
 
-        return score   
+        return score
 
     def _center_control_eval(self):
-        """Đánh giá kiểm soát trung tâm"""
+        """Đánh giá kiểm soát trung tâm (d4, d5, e4, e5)"""
         score = 0
-        for sq in (chess.D4, chess.D5, chess.E4, chess.E5):
+        center_squares = (chess.D4, chess.D5, chess.E4, chess.E5)
+        
+        for sq in center_squares:
             p = self.board.piece_at(sq)
             if p:
                 score += 30 if p.color == chess.WHITE else -30
+                
+            white_attackers = len(self.board.attackers(chess.WHITE, sq))
+            black_attackers = len(self.board.attackers(chess.BLACK, sq))
+            score += (white_attackers - black_attackers) * 8
+            
         return score
 
-    def __init___piece_square_tables(self):
-        """Khởi tạo PSTs (Piece Square Tables)."""
-       # Bảng Vua mới cho Trung cuộc: Khuyến khích nhập thành (ô g1, c1)
+    def _init_piece_square_tables(self): 
+        """Khởi tạo PSTs (Piece Square Tables) cho Trung cuộc (MG) và Tàn cuộc (EG)."""
+        # Bảng Vua Trung cuộc: Khuyến khích nhập thành (ô g1, c1)
         KING_MG_PST = [
-        -30,-40,-40,-50,-50,-40,-40,-30, # Hàng 1 (Tệ)
+        -30,-40,-40,-50,-50,-40,-40,-30, 
         -30,-40,-40,-50,-50,-40,-40,-30,
         -30,-40,-40,-50,-50,-40,-40,-30,
         -30,-40,-40,-50,-50,-40,-40,-30,
         -20,-30,-30,-40,-40,-30,-30,-20,
         -10,-20,-20,-20,-20,-20,-20,-10,
-        20, 20, 0, 0, 0, 0, 20, 20, # Hàng 7 (Gần Tốt)
-        20, 30, 10, 0, 0, 10, 30, 20  # Hàng 8 (Vị trí nhập thành là tốt nhất)
+        20, 20, 0, 0, 0, 0, 20, 20, 
+        20, 30, 10, 0, 0, 10, 30, 20 
         ]
         
-        # Bảng Vua cũ của bạn, giờ là Tàn cuộc: Khuyến khích trung tâm
+        # Bảng Vua Tàn cuộc: Khuyến khích trung tâm
         KING_EG_PST = [
         -50,-40,-30,-20,-20,-30,-40,-50,
         -30,-20,-10, 0, 0,-10,-20,-30,
@@ -354,7 +311,7 @@ class ChessEngine:
         -50,-40,-30,-20,-20,-30,-40,-50
         ]
         
-    # Bảng Tốt Trung cuộc (Tập trung vào trung tâm và cấu trúc)
+        # Bảng Tốt Trung cuộc
         PAWN_MG_PST = [
         0, 0, 0, 0, 0, 0, 0, 0,
         5, 10, 10, -20, -20, 10, 10, 5,
@@ -366,15 +323,15 @@ class ChessEngine:
         0, 0, 0, 0, 0, 0, 0, 0
         ]
         
-        # Bảng Tốt Tàn cuộc (Tập trung vào việc tiến lên để phong cấp)
+        # Bảng Tốt Tàn cuộc
         PAWN_EG_PST = [
         0, 0, 0, 0, 0, 0, 0, 0,
-        10, 10, 10, 10, 10, 10, 10, 10, # Hàng 2
-        20, 20, 20, 20, 20, 20, 20, 20, # Hàng 3
-        30, 30, 30, 30, 30, 30, 30, 30, # Hàng 4
-        40, 40, 40, 40, 40, 40, 40, 40, # Hàng 5
-        60, 60, 60, 60, 60, 60, 60, 60, # Hàng 6
-        100, 100, 100, 100, 100, 100, 100, 100, # Hàng 7 (Rất nguy hiểm)
+        10, 10, 10, 10, 10, 10, 10, 10, 
+        20, 20, 20, 20, 20, 20, 20, 20, 
+        30, 30, 30, 30, 30, 30, 30, 30, 
+        40, 40, 40, 40, 40, 40, 40, 40, 
+        60, 60, 60, 60, 60, 60, 60, 60, 
+        100, 100, 100, 100, 100, 100, 100, 100, 
         0, 0, 0, 0, 0, 0, 0, 0
         ]
         KNIGHT_PST = [
@@ -418,78 +375,63 @@ class ChessEngine:
         -20,-10,-10,-5,-5,-10,-10,-20
         ]
         
-        # Gán vào hai từ điển riêng biệt
         self.PST_MG = {
-        chess.PAWN: PAWN_MG_PST, # <-- Dùng bảng Trung cuộc
+        chess.PAWN: PAWN_MG_PST, 
         chess.KNIGHT: KNIGHT_PST,
         chess.BISHOP: BISHOP_PST,
         chess.ROOK: ROOK_PST,
         chess.QUEEN: QUEEN_PST,
-        chess.KING: KING_MG_PST # <-- Dùng bảng Trung cuộc
+        chess.KING: KING_MG_PST 
         }
         
         self.PST_EG = {
-        chess.PAWN: PAWN_EG_PST, # # <-- Dùng bảng Tàn cuộc
+        chess.PAWN: PAWN_EG_PST, 
         chess.BISHOP: BISHOP_PST,
         chess.KNIGHT: KNIGHT_PST,
         chess.ROOK: ROOK_PST,
         chess.QUEEN: QUEEN_PST,
-        chess.KING: KING_EG_PST # <-- Dùng bảng Tàn cuộc
+        chess.KING: KING_EG_PST 
         }
     
     def _get_game_phase_taper(self):
-        """Tính toán giai đoạn ván cờ (game phase taper).Trả về một giá trị từ 24 (Khai cuộc/Trung cuộc) giảm dần về 0 (Tàn cuộc)."""
-        # Trọng số cho các quân cờ (không tính Tốt và Vua)
+        """Tính toán giai đoạn ván cờ (game phase taper)."""
         phase_weights = {
             chess.KNIGHT: 1,
             chess.BISHOP: 1,
             chess.ROOK: 2,
             chess.QUEEN: 4
         }
-        # Giá trị tối đa (2 Hậu, 4 Xe, 4 Tượng, 4 Mã)
         max_phase = 24 
         
         current_phase = 0
         for piece_type in (chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN):
-            # Đếm số quân của cả hai bên
             count = len(self.board.pieces(piece_type, chess.WHITE)) + len(self.board.pieces(piece_type, chess.BLACK))
             current_phase += count * phase_weights[piece_type]
         
-        # Đảm bảo giá trị không vượt quá max_phase (ví dụ: Tốt phong cấp)
         current_phase = min(current_phase, max_phase)
         
         return current_phase
     
     
-
     def _material_eval(self): 
         """Đánh giá vật chất và bảng vị trí quân cờ (có nhận biết giai đoạn)"""
         score = 0
-        
-        # Lấy giai đoạn ván cờ (từ 24 -> 0)
         phase = self._get_game_phase_taper()
-        max_phase = 24 # Phải khớp với hàm _get_game_phase_taper
+        max_phase = 24 
         
         for sq in chess.SQUARES:
             piece = self.board.piece_at(sq)
             if not piece:
                 continue
         
-            # 1. Tính giá trị vật chất
             val = self.piece_values[piece.piece_type]
-            
-            # 2. Tính giá trị vị trí (PST) bằng cách trộn
             mirrored_sq = chess.square_mirror(sq)
             
-            # Lấy điểm từ cả hai bảng
             pst_mg_score = self.PST_MG[piece.piece_type][sq if piece.color == chess.WHITE else mirrored_sq]
             pst_eg_score = self.PST_EG[piece.piece_type][sq if piece.color == chess.WHITE else mirrored_sq]
             
-            # Công thức trộn
-            # (Điểm MG * tỷ lệ MG) + (Điểm EG * tỷ lệ EG)
             pst_score = ((pst_mg_score * phase) + (pst_eg_score * (max_phase - phase))) // max_phase
             
-            # 3. Cộng/Trừ vào điểm tổng
             if piece.color == chess.WHITE:
                 score += val + pst_score
             else:
@@ -497,8 +439,8 @@ class ChessEngine:
         
         return score
 
-    def _King_safety_eval(self):
-        """Đánh giá độ an toàn của vua"""
+    def _king_safety_eval(self): 
+        """Đánh giá độ an toàn của vua (chủ yếu ở Trung cuộc)"""
         score = 0
         king_white_sq = self.board.king(chess.WHITE)
         king_black_sq = self.board.king(chess.BLACK)
@@ -506,138 +448,107 @@ class ChessEngine:
         def penalty(king_sq,color):
             if king_sq is None:
                 return 0
-            # phat neu vua o trung tam hoac mo rong
+            
             file = chess.square_file(king_sq)
             rank = chess.square_rank(king_sq)
             pen = 0
             
-            # phat manh neu vua o trung tam
             if rank in(3,4) or file in(3,4):
                 pen += 60
                 
-            # kiem tra cac quan che chan xung quanh
-            font_rank = rank +(1 if color == chess.WHITE else -1)
+            if color == chess.WHITE:
+                front_rank = rank + 1
+                start_rank = 1 
+            else:
+                front_rank = rank - 1
+                start_rank = 6
+                
             for df in [-1,0,1]:
                 f = file + df
-                if 0 <= f <= 7 and 0 <= font_rank <= 7:
-                    sq = chess.square(f,font_rank)
+                if 0 <= f <= 7 and 0 <= front_rank <= 7:
+                    sq = chess.square(f,front_rank)
                     piece = self.board.piece_at(sq)
                     if not piece or piece.piece_type != chess.PAWN or piece.color != color:
                         pen += 20
-            # neu vua chua nhap thanh => phat them
-            if (color == chess.WHITE and not self.board.has_kingside_castling_rights(chess.WHITE) and not self.board.has_queenside_castling_rights(chess.WHITE)) or \
-               (color == chess.BLACK and not self.board.has_kingside_castling_rights(chess.BLACK) and not self.board.has_queenside_castling_rights(chess.BLACK)):
-                pen += 20
-
+                        
+            if rank == start_rank and file == 4:
+                if (color == chess.WHITE and self.board.has_kingside_castling_rights(chess.WHITE) or self.board.has_queenside_castling_rights(chess.WHITE)) or \
+                    (color == chess.BLACK and self.board.has_kingside_castling_rights(chess.BLACK) or self.board.has_queenside_castling_rights(chess.BLACK)):
+                    pen += 20 
+            
             return pen
+
         score -= penalty(king_white_sq,chess.WHITE)
         score += penalty(king_black_sq,chess.BLACK)
         return score
     
-    def _threats_eval(self):
-        """Đánh giá các mối đe dọa trên bàn cờ (sửa double-count)."""
-        score = 0
-        piece_values = self.piece_values
-        for sq in chess.SQUARES:
-            piece = self.board.piece_at(sq)
-            if not piece:
-                continue
-            attackers = self.board.attackers(not piece.color, sq)
-            defenders = self.board.attackers(piece.color, sq)
-
-            # penalty nếu bị tấn công mà không có người bảo vệ
-            if attackers and not defenders:
-                pen = self.piece_values[piece.piece_type] * 1.2
-                if piece.color == chess.WHITE:
-                    score -= pen
-                else:
-                    score += pen
-
-            # reward nếu ta tấn công vật hơn kẻ địch tấn công
-            for at in attackers:
-                attackers_piece = self.board.piece_at(at)
-                if attackers_piece:
-                    target = piece
-                    if target and attackers_piece and piece_values[target.piece_type] > piece_values[attackers_piece.piece_type]:
-                        if attackers_piece.color == chess.WHITE:
-                            score += 15
-                        else:
-                            score -= 15
-        return score
-    
     def _mvv_lva_value(self,move):
-        """ Ham tra ve gia tri MVV-LVA cho nuoc di """
+        """ Ham tra ve gia tri MVV-LVA cho nuoc di (Most Valuable Victim - Least Valuable Attacker) """
         if not self.board.is_capture(move):
             return 0
         victim = self.board.piece_at(move.to_square)
         attacker = self.board.piece_at(move.from_square)
-        # nếu thiếu thông tin thì không đánh giá
+        if not victim and self.board.is_en_passant(move):
+            victim = chess.Piece(chess.PAWN, not self.board.turn)
+            
         if not victim or not attacker:
             return 0
+            
         v = self.piece_values.get(victim.piece_type,0)
         a = self.piece_values.get(attacker.piece_type,0)
-        return 10000 + (v*10 - a)
+        return 10000 + (v*10 - a) 
     
     def static_exchange_eval(self, move):
-        """Approximate full SEE by simulating captures on a copied board.
-        Trả về giá trị vật chất ròng (>=0 có lợi, <0 bất lợi)."""
-        # only meaningful for captures
+        """Approximate full SEE by simulating captures on a copied board."""
         if not self.board.is_capture(move):
             return 0
 
-        try:
-            sim = self.board.copy()
-        except Exception:
-            # fallback to push/pop on original board if copy not available (rare)
-            self.board.push(move)
-            val = self.piece_values.get(self.board.piece_at(move.to_square).piece_type, 0) if self.board.piece_at(move.to_square) else 0
-            self.board.pop()
-            return val
-
-        # initial victim value (what move captures)
-        victim_piece = self.board.piece_at(move.to_square)
-        if victim_piece is None and self.board.is_en_passant(move):
-            # en-passant victim square (behind to_square)
-            ep_sq = move.to_square + ( -8 if self.board.turn == chess.WHITE else 8 )
-            victim_piece = self.board.piece_at(ep_sq)
+        sim = self.board.copy()
+        
+        victim_piece = sim.piece_at(move.to_square)
+        if victim_piece is None and sim.is_en_passant(move):
+            victim_piece = chess.Piece(chess.PAWN, not sim.turn)
+            
         victim_value = self.piece_values.get(victim_piece.piece_type, 0) if victim_piece else 0
 
         gains = [victim_value]
 
-        # play the initial move on simulation board
         try:
             sim.push(move)
         except Exception:
-            # illegal weird move: treat as neutral
             return 0
 
         target = move.to_square
-        side = sim.turn  # opponent to move now
-
-        # simulate sequence of cheapest recaptures until none left
+        
         while True:
-            # collect legal captures that land on target square
             captures = [m for m in sim.legal_moves if m.to_square == target and sim.is_capture(m)]
+            
             if not captures:
                 break
-            # choose attacker with least material (cheapest attacker)
+                
             def attacker_value(mv):
                 p = sim.piece_at(mv.from_square)
                 return self.piece_values.get(p.piece_type, 0) if p else 0
+                
             best = min(captures, key=attacker_value)
-            # value of piece that will be captured by this recapture
+            
             captured = sim.piece_at(best.to_square)
+            if captured is None and sim.is_en_passant(best):
+                captured = chess.Piece(chess.PAWN, not sim.turn)
+                
             cap_val = self.piece_values.get(captured.piece_type, 0) if captured else 0
             gains.append(cap_val)
             sim.push(best)
-            side = sim.turn
 
-        # minimax-like resolution of gains to get net material outcome
-        net = 0
-        for g in reversed(gains):
-            net = g - max(0, net)
-
-        return net
+        net_material = 0
+        for i in reversed(range(len(gains))):
+            gain = gains[i]
+            if i % 2 == 0: 
+                net_material = gain - net_material
+            else: 
+                net_material = net_material - gain
+        
+        return net_material
 
     def _order_moves_improved(self, depth):
         """Sắp xếp nước đi sử dụng nhiều heuristic để cải thiện hiệu suất tìm kiếm."""
@@ -648,26 +559,11 @@ class ChessEngine:
         key_tt = None
         try:
             h = self.zobrist_hash()
-            tt_entry = self.tt.table.get(h)
+            tt_entry = self.tt.probe(h, depth, float('-inf'), float('inf')) 
             if tt_entry:
-                key_tt = tt_entry[3]
+                key_tt = tt_entry[1] # Lấy best_move từ TT
         except Exception:
             key_tt = None
-
-        # (PRE-COMPUTATION) #
-        # 1. Tính toán tất cả các ô bị tấn công bởi đối phương
-        attackers_of_my = set()
-        my_hanging_pieces = set()  # Danh sach moi
-        for sq, pc in self.board.piece_map().items():
-            if pc.color == my_color:
-                attackers = self.board.attackers(not my_color, sq)
-                attackers_of_my.update(attackers)
-                
-                # 2. Logic "is_hanging" dduowc chay 1 lan giam O(phuc tap)
-                if attackers: # neu co quan tan cong
-                    defenders = self.board.attackers(my_color, sq)
-                    if not defenders: # va khong co quan bao ve
-                        my_hanging_pieces.add(sq)
 
         k1, k2 = self.killers.get(depth, [None, None])
 
@@ -675,36 +571,33 @@ class ChessEngine:
             s = 0
             if key_tt is not None and m == key_tt:
                 s += 100000
+                
             s += self._mvv_lva_value(m)
+            
             if m.promotion:
                 s += 8000
+                
             if m == k1:
                 s += 5000
             elif m == k2:
                 s += 4000
-            s += self.history.get((m.from_square, m.to_square), 0)
-
-            # Defensive bonuses
-            if m.from_square in my_hanging_pieces:
-                s += 600
-            if self.board.is_capture(m) and m.to_square in attackers_of_my:
-                s += 1200 # thuong co viecj an quan dang bi tan cong
-            for atk_sq in attackers_of_my:
-                # moving to square that attacks an attacker
-                if atk_sq in self.board.attacks(m.to_square):
-                    s += 800
-                    break
-
-            # Use SEE: if capture is losing on exchange, heavily penalize
+                
+            if not self.board.is_capture(m):
+                s += self.history.get((m.from_square, m.to_square), 0)
+                
             if self.board.is_capture(m):
                 see_val = self.static_exchange_eval(m)
                 if see_val < 0:
-                    s -= 20000  # deprioritize losing captures strongly
+                    s -= 20000 
                 else:
-                    # small bonus for winning captures
-                    s += min(2000, see_val * 8)
-
-            return -s  # sort ascending, negate to prefer larger s
+                    s += min(2000, see_val * 8) 
+                    
+            if self.board.gives_check(m):
+                s += 100
+            if self.board.is_castling(m):
+                s += 50
+                
+            return -s 
 
         moves.sort(key=score_move)
         return moves
@@ -716,118 +609,157 @@ class ChessEngine:
             self.killers[depth][0] = move
             return
         elif move != k1:
-            self.killers[depth][1] = k1  # dich chuyen killer 1 xuong killer 2
-            self.killers[depth][0] = move  # luu nuoc di hien tai vao killer 1
+            self.killers[depth][1] = k1 
+            self.killers[depth][0] = move 
     
-    def _record_history(self,move,depth,bonus=1): # truyen vao 4 tham so bao gom
+    def _record_history(self,move,depth,bonus=1):
         """Cập nhật bảng lịch sử cho nước đi"""
-        key = (move.from_square, move.to_square) # tao key tu nuoc di va o den de cap nhat vao history de tang toc do alpha-beta
-        self.history[key] += bonus * (2 ** depth) # tang diem cho nuoc di trong history heuristic
+        key = (move.from_square, move.to_square) 
+        self.history[key] += bonus * (1 << depth) 
 
 
     def qsearch(self, alpha, beta, is_maximizing):
-        """Tìm kiếm tĩnh (Quiescence Search) để giải quyết hiệu ứng chân trời. Hàm này chỉ xem xét các nước đi "ồn ào" (ăn quân, phong cấp)."""
+        """Tìm kiếm tĩnh (Quiescence Search)"""
     
-        # 1. Kiểm tra timeout (quan trọng)
         if self.stop_time is not None and time.time() > self.stop_time:
-            return None # Tín hiệu timeout
+            return None 
 
-        # 2. Lấy điểm "Stand-pat" (điểm "đứng yên" nếu không làm gì)
-        # Đây là điểm số nếu người chơi chọn không thực hiện nước đi ồn ào nào.
         stand_pat_score = self.evaluate_board()
 
-        # 3. Cắt tỉa Alpha-Beta ban đầu
         if is_maximizing:
             if stand_pat_score >= beta:
-                return stand_pat_score # Cắt tỉa Beta
-            
+                return stand_pat_score 
             alpha = max(alpha, stand_pat_score)
-            max_eval = stand_pat_score # Điểm tốt nhất ban đầu là điểm đứng yên
-        else: # is_minimizing
+            max_eval = stand_pat_score 
+        else: 
             if stand_pat_score <= alpha:
-                return stand_pat_score # Cắt tỉa Alpha
+                return stand_pat_score 
             beta = min(beta, stand_pat_score)
-            min_eval = stand_pat_score # Điểm tốt nhất ban đầu là điểm đứng yên
+            min_eval = stand_pat_score 
 
-        # 4. Tạo và sắp xếp các nước đi "ồn ào"
-        # Chỉ lấy nước ăn quân (capture) và phong cấp (promotion)
         noisy_moves = [m for m in self.board.legal_moves if m.promotion is not None or self.board.is_capture(m)]
         
-        # Sắp xếp nhanh bằng MVV-LVA (đã có trong _mvv_lva_value)
         noisy_moves.sort(key=lambda m: -self._mvv_lva_value(m))
 
-        # 5. Duyệt các nước đi ồn ào (Logic tương tự minimax)
         for move in noisy_moves:
-        # Lọc SEE: Bỏ qua các nước ăn quân rõ ràng là lỗ
-            if self.board.is_capture(move) and self.static_exchange_eval(move) < 0:
-                continue 
 
             self.board.push(move)
-            # Gọi đệ quy qsearch, lật is_maximizing
             eval_score = self.qsearch(alpha, beta, not is_maximizing) 
             self.board.pop()
 
             if eval_score is None:
-                return None # Lan truyền tín hiệu timeout
+                return None 
 
-        # Cập nhật điểm số
             if is_maximizing:
                 if eval_score > max_eval:
                     max_eval = eval_score
                 alpha = max(alpha, eval_score)
                 if alpha >= beta:
-                    break # Cắt tỉa Beta
-            else: # is_minimizing
+                    break 
+            else: 
                 if eval_score < min_eval:
                     min_eval = eval_score
                 beta = min(beta, eval_score)
                 if alpha >= beta:
-                    break # Cắt tỉa Alpha
+                    break 
 
-        # 6. Trả về điểm số cuối cùng
         return max_eval if is_maximizing else min_eval
 
-    def minimax_alpha_beta(self, depth, alpha, beta, is_maximizing):
-        """Minimax với cắt tỉa alpha-beta và bộ nhớ đệm bảng chuyển vị."""
-        
+    # =========================================================
+    # CẤP ĐỘ DỄ: MINIMAX CƠ BẢN (KHÔNG CẮT TỈA, KHÔNG TT)
+    # =========================================================
+    def minimax_pure(self, depth, is_maximizing):
+        """Minimax cổ điển (không Alpha-Beta, không TT)."""
+        # Kiểm tra thời gian dừng
         if self.stop_time is not None and time.time() > self.stop_time:
-            return self.evaluate_board(), None
-
-        h = self.zobrist_hash() # tinh hash hien tai
-        tt_hit = self.tt.probe(h, depth, alpha, beta) # tra bang TT
-        
-        
-        """ Nếu tìm thấy trong TT, trả về giá trị và nước đi tốt nhất."""
-        if tt_hit is not None:
-            val, best_move, flag = tt_hit
-            return val, best_move
-
-
-        """Nếu trò chơi kết thúc, đánh giá ngay."""
+            return None, None 
+        # Điểm dừng 1: Xử lý trạng thái kết thúc trò chơi
         if self.board.is_game_over():
-            val = self.evaluate_board()
-            return val, None
-
-        """Nếu đạt độ sâu 0, chuyển sang Tìm kiếm Tĩnh (QSearch)."""
+            return self.evaluate_board(), None
+        # Điểm dừng 2: Dừng tìm kiếm theo độ sâu
         if depth == 0:
-             # qsearch sẽ trả về điểm số (hoặc None nếu timeout)
-            val = self.qsearch(alpha, beta, is_maximizing) 
-             # qsearch không trả về best_move, chỉ trả về điểm
+            # Dùng QSearch để ổn định đánh giá cuối cùng
+            val = self.qsearch(float('-inf'), float('inf'), is_maximizing)
+            if val is None:
+                 return None, None
             return val, None
 
         best_move = None
-        alpha_orig, beta_orig = alpha, beta   # <-- giữ giá trị ban đầu
-        
-        """Minimax với cắt tỉa alpha-beta."""
+        # Cấu trúc Minimax cơ bản
         if is_maximizing:
             max_eval = float('-inf')
             for move in self._order_moves_improved(depth):
                 self.board.push(move)
-                eval_score, _ = self.minimax_alpha_beta(depth - 1, alpha, beta, False)
+                # Gọi đệ quy không có alpha/beta
+                eval_score, _ = self.minimax_pure(depth - 1, False) 
                 self.board.pop()
                 
                 if eval_score is None:
-                    return None, None  # timeout occurred in deeper call
+                    return None, None
+                # Cập nhật điểm tối đa và nước đi tốt nhất
+                if eval_score > max_eval:
+                    max_eval = eval_score
+                    best_move = move
+            return max_eval, best_move
+            
+        else: # is_minimizing
+            min_eval = float('inf')
+            for move in self._order_moves_improved(depth):
+                self.board.push(move)
+                # Gọi đệ quy không có alpha/beta
+                eval_score, _ = self.minimax_pure(depth - 1, True)
+                self.board.pop()
+                
+                if eval_score is None:
+                    return None, None
+                
+                if eval_score < min_eval:
+                    min_eval = eval_score
+                    best_move = move
+            return min_eval, best_move
+
+
+    # =========================================================
+    # CẤP ĐỘ TRUNG BÌNH/KHÓ: MINIMAX + ALPHA-BETA 
+    # =========================================================
+    def minimax_full(self, depth, alpha, beta, is_maximizing):
+        """Minimax với cắt tỉa Alpha-Beta và tất cả kỹ thuật nâng cao (TT, Killers, History)."""
+        
+        if self.stop_time is not None and time.time() > self.stop_time:
+            return None, None 
+
+        h = self.zobrist_hash() 
+        tt_hit = self.tt.probe(h, depth, alpha, beta) 
+        
+        if tt_hit is not None:
+            val, best_move, flag = tt_hit
+            return val, best_move
+
+        if self.board.is_game_over():
+            val = self.evaluate_board()
+            self.tt.store(h, depth, 'EXACT', val, None)
+            return val, None
+
+        if depth == 0:
+            val = self.qsearch(alpha, beta, is_maximizing) 
+            if val is None:
+                 return None, None
+            
+            self.tt.store(h, depth, 'EXACT', val, None) 
+            return val, None
+
+        best_move = None
+        alpha_orig, beta_orig = alpha, beta 
+        
+        if is_maximizing:
+            max_eval = float('-inf')
+            for move in self._order_moves_improved(depth):
+                self.board.push(move)
+                eval_score, _ = self.minimax_full(depth - 1, alpha, beta, False) 
+                self.board.pop()
+                
+                if eval_score is None:
+                    return None, None 
                 
                 if eval_score > max_eval:
                     max_eval = eval_score
@@ -838,7 +770,10 @@ class ChessEngine:
                         self._record_killer(move, depth)
                         self._record_history(move, depth, bonus=1)
                     break
-            # store in TT: dùng alpha_orig/beta_orig để quyết flag
+            
+            if best_move is None: 
+                return max_eval, None 
+
             if max_eval <= alpha_orig:
                 flag = 'UPPER'
             elif max_eval >= beta_orig:
@@ -847,15 +782,16 @@ class ChessEngine:
                 flag = 'EXACT'
             self.tt.store(h, depth, flag, max_eval, best_move)
             return max_eval, best_move
-        else:
+            
+        else: # is_minimizing
             min_eval = float('inf')
             for move in self._order_moves_improved(depth):
                 self.board.push(move)
-                eval_score, _ = self.minimax_alpha_beta(depth - 1, alpha, beta, True)
+                eval_score, _ = self.minimax_full(depth - 1, alpha, beta, True)
                 self.board.pop()
                 
                 if eval_score is None:
-                    return None, None  # timeout occurred in deeper call
+                    return None, None 
                 
                 if eval_score < min_eval:
                     min_eval = eval_score
@@ -866,7 +802,9 @@ class ChessEngine:
                         self._record_killer(move, depth)
                         self._record_history(move, depth, bonus=1)
                     break
-            # store in TT: dùng alpha_orig/beta_orig để quyết flag
+            
+            if best_move is None:
+                return min_eval, None
             if min_eval <= alpha_orig:
                 flag = 'UPPER'
             elif min_eval >= beta_orig:
@@ -876,53 +814,56 @@ class ChessEngine:
             self.tt.store(h, depth, flag, min_eval, best_move)
             return min_eval, best_move
 
-    def best_move(self,depth=3,time_limit=5.0):
-          """ dung iterative deepening de tim nuoc di tot nhat trong gioi han thoi gian """
-          start = time.time()
-          self.stop_time = start + time_limit
-          best_move = None
-          best_score = float('-inf')
-          
-          # Reset heuristic cho lượt tìm kiếm mới
-          self.killers.clear()
-          self.history.clear()
-          
-          
-          # Xác định xem chúng ta đang Tối đa hóa (Trắng) hay Tối thiểu hóa (Đen)
-          is_maximizing_player = self.board.turn == chess.WHITE
-          
-          # Đặt điểm số ban đầu cho phù hợp
-          # Nếu là Trắng, tìm +inf. Nếu là Đen, tìm -inf (từ góc nhìn của Trắng)
-          # Nhưng vì hàm minimax sẽ xử lý, chúng ta chỉ cần đặt cho phù hợp
-          best_score = float('-inf') if is_maximizing_player else float('inf')
-          
 
-          try:
-            for depth in range(1,depth + 1):
-              if time.time() - start > time_limit:
-                break
-              
-              score, mv = self.minimax_alpha_beta(depth, float('-inf'), float('inf'), is_maximizing_player)
-              
-              if score is None:
-                break # Hết giờ
-              
-              if mv is not None:
-                # Cập nhật điểm số tốt nhất
-                if is_maximizing_player:
-                  if score > best_score:
-                    best_score = score
-                    best_move = mv
-                else:
-                  if score < best_score:
-                    best_score = score
-                    best_move = mv
-              
-              # Kiểm tra chiếu bí
-              if abs(best_score) >= 99999:
-                break
-          finally:
-            self.stop_time = None # reset timeout
-          
-          return best_move           
- 
+    def best_move(self, depth=3, time_limit=5.0, mode='minimax_full'): 
+        """Sử dụng thuật toán tìm kiếm tương ứng với mode và iterative deepening."""
+        
+        legal_moves = list(self.board.legal_moves)
+        if not legal_moves:
+            return None
+            
+        start = time.time()
+        self.stop_time = start + time_limit
+        last_safe_move = random.choice(legal_moves) # Nước đi an toàn khởi tạo
+        
+        is_maximizing_player = self.board.turn == chess.WHITE
+        
+        if mode == 'minimax_pure':
+            # CẤP ĐỘ DỄ: Chỉ chạy Minimax thuần túy một lần ở độ sâu tối đa
+            score, mv = self.minimax_pure(depth, is_maximizing_player)
+            if mv is not None:
+                #vị trí 1: In điểm số cho mỗi độ sâu hoàn thành (Dễ)
+                print(f"DEBUG (EASY MODE): Depth={depth}, Move={mv.uci()}, Score={score}")
+                return mv
+            return last_safe_move
+
+        # CẤP ĐỘ TRUNG BÌNH/KHÓ: MINIMAX + ALPHA-BETA + ID
+        self.killers.clear()
+        self.history.clear()
+        best_score_so_far = float('-inf') if is_maximizing_player else float('inf')
+        
+        try:
+            for current_depth in range(1, depth + 1):
+                if time.time() >= self.stop_time:
+                    break
+                
+                # Gọi hàm minimax_full
+                score, mv = self.minimax_full(current_depth, float('-inf'), float('inf'), is_maximizing_player)
+                
+                if score is None:
+                    break 
+
+                if mv is not None:
+                    if (is_maximizing_player and score >= best_score_so_far) or \
+                       (not is_maximizing_player and score <= best_score_so_far):
+                        best_score_so_far = score
+                        last_safe_move = mv 
+                # VỊ TRÍ 2: In điểm số cho mỗi độ sâu hoàn thành (Trung bình/Khó)
+                    print(f"DEBUG: Depth={current_depth}, Move={mv.uci()}, Score={score}")
+                if abs(best_score_so_far) >= 99999:
+                    break
+                    
+        finally:
+            self.stop_time = None 
+        
+        return last_safe_move
