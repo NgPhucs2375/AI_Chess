@@ -38,7 +38,7 @@ class ChessEngine:
     def __init__(self):
         print("--- 100% ĐANG CHẠY CODE ENGINE MỚI NHẤT! ---")
         self.board = chess.Board()
-<<<<<<< HEAD
+
         self.state = None
         # transposition cache (fen, depth, is_maximizing) -> (score, best_move)
 # ...existing code...
@@ -55,19 +55,19 @@ class ChessEngine:
             chess.PAWN: 100,
             chess.KNIGHT: 320,
             chess.BISHOP: 330,
-=======
+
         
         # --- ĐIỂM VẬT CHẤT CHUYÊN NGHIỆP ---
         self.piece_values = {
             chess.PAWN: 100,
             chess.KNIGHT: 320,
             chess.BISHOP: 330, 
->>>>>>> 59e5bb0211a5439fe5e6b86d0c237a643da06846
+
             chess.ROOK: 500,
             chess.QUEEN: 900,
             chess.KING: 20000
         }
-<<<<<<< HEAD
+
         # Trọng số mobility mặc định
         self.mobility_weights = {
             chess.PAWN: 1,
@@ -90,7 +90,7 @@ class ChessEngine:
         self.stop_time = None
 
        
-=======
+
         
         # --- ĐIỂM THƯỞNG CẶP QUÂN ---
         self.BISHOP_PAIR_BONUS = 50 
@@ -112,7 +112,7 @@ class ChessEngine:
         self.history = defaultdict(int) 
         
         self.stop_time = None
->>>>>>> 59e5bb0211a5439fe5e6b86d0c237a643da06846
+
 
   
     def print_board(self):
@@ -740,8 +740,7 @@ class ChessEngine:
                 self.board.pop()
                 
                 if eval_score is None:
-<<<<<<< HEAD
-=======
+
                     return None, None
                 # Cập nhật điểm tối đa và nước đi tốt nhất
                 if eval_score > max_eval:
@@ -806,7 +805,7 @@ class ChessEngine:
                 self.board.pop()
                 
                 if eval_score is None:
->>>>>>> 59e5bb0211a5439fe5e6b86d0c237a643da06846
+
                     return None, None 
                 
                 if eval_score > max_eval:
@@ -818,13 +817,12 @@ class ChessEngine:
                         self._record_killer(move, depth)
                         self._record_history(move, depth, bonus=1)
                     break
-<<<<<<< HEAD
-=======
+
             
             if best_move is None: 
                 return max_eval, None 
 
->>>>>>> 59e5bb0211a5439fe5e6b86d0c237a643da06846
+
             if max_eval <= alpha_orig:
                 flag = 'UPPER'
             elif max_eval >= beta_orig:
@@ -842,11 +840,11 @@ class ChessEngine:
                 self.board.pop()
                 
                 if eval_score is None:
-<<<<<<< HEAD
+
                     return None, None  
-=======
+
                     return None, None 
->>>>>>> 59e5bb0211a5439fe5e6b86d0c237a643da06846
+
                 
                 if eval_score < min_eval:
                     min_eval = eval_score
@@ -857,12 +855,11 @@ class ChessEngine:
                         self._record_killer(move, depth)
                         self._record_history(move, depth, bonus=1)
                     break
-<<<<<<< HEAD
-=======
+
             
             if best_move is None:
                 return min_eval, None
->>>>>>> 59e5bb0211a5439fe5e6b86d0c237a643da06846
+
             if min_eval <= alpha_orig:
                 flag = 'UPPER'
             elif min_eval >= beta_orig:
