@@ -34,7 +34,8 @@ BUTTON_BORDER = PANEL_BORDER
 BUTTON_TEXT = (30, 20, 10)
 MOVELOG_BG = (205, 170, 120)  # move log tông gỗ tối hơn
 MOVELOG_TEXT = (10, 10, 10)
-
+# Thời gian mặc định để hiển thị modal kết quả (giây) — chỉnh ở đây để thay đổi toàn cục
+MODAL_DISPLAY_SECONDS = 5
 # -------------------------
 # Pygame init & fonts
 # -------------------------
@@ -712,10 +713,13 @@ def draw_promotion_menu(turn, menu_x):
     piece_positions = []
     for i, code in enumerate(piece_codes):
         piece_color = 'w' if turn == 'w' else 'b'
+        # scale the piece image to the promotion box size so the visual matches the clickable rect
         img = pieces[piece_color + code]
+        scaled_img = pygame.transform.smoothscale(img, (PROMOTION_PIECE_SIZE, PROMOTION_PIECE_SIZE))
         x = menu_x + PROMOTION_PADDING + i*(PROMOTION_PIECE_SIZE + PROMOTION_PADDING)
         y = HEIGHT//2 - PROMOTION_PIECE_SIZE//2
-        screen.blit(img, pygame.Rect(x, y, PROMOTION_PIECE_SIZE, PROMOTION_PIECE_SIZE))
+        # blit the scaled image at the exact rect used for click detection
+        screen.blit(scaled_img, (x, y))
         piece_positions.append((pygame.Rect(x, y, PROMOTION_PIECE_SIZE, PROMOTION_PIECE_SIZE), code))
     return piece_positions
 
@@ -762,7 +766,7 @@ def main():
 
     # --- clocks: 10 minutes each (seconds) ---
     # dùng biến TEST_SECONDS để dễ thay đổi khi test
-    TEST_SECONDS = 600    # đặt tg 10 phút 
+    TEST_SECONDS = 600    # Chỉnh thời gian ván đấu 
     white_time = TEST_SECONDS
     black_time = TEST_SECONDS
     running_side = 'w' if gs.white_to_move else 'b'
@@ -785,6 +789,7 @@ def main():
                     game_over = True
                     winner = 'Black'
                     pygame.display.set_caption("Black wins on time")
+                    show_result_modal(winner, reason="Thua do hết giờ")
             else:
                 black_time -= dt
                 if black_time <= 0:
@@ -792,6 +797,7 @@ def main():
                     game_over = True
                     winner = 'White'
                     pygame.display.set_caption("White wins on time")
+                    show_result_modal(winner, reason="Thua do hết giờ")
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -817,6 +823,17 @@ def main():
                                 # switch clocks
                                 running_side = 'b' if running_side == 'w' else 'w'
                                 last_tick = pygame.time.get_ticks()
+
+                                # --- check game end after move ---
+                                over, win, reason = check_game_end(gs)
+                                if over:
+                                    game_over = True
+                                    winner = win
+                                    if winner:
+                                        pygame.display.set_caption(f"{winner} thắng")
+                                    else:
+                                        pygame.display.set_caption("Hòa")
+                                    show_result_modal(winner, reason=reason)
                             break
                     continue
 
@@ -862,8 +879,18 @@ def main():
                                         # switch clock side
                                         running_side = 'b' if running_side == 'w' else 'w'
                                         last_tick = pygame.time.get_ticks()
-                                        if gs.is_insufficient_material():
-                                            pygame.display.set_caption("Draw by insufficient material")
+
+                                        # --- check game end after move ---
+                                        over, win, reason = check_game_end(gs)
+                                        if over:
+                                            game_over = True
+                                            winner = win
+                                            if winner:
+                                                pygame.display.set_caption(f"{winner} thắng")
+                                            else:
+                                                pygame.display.set_caption("Hòa")
+                                            show_result_modal(winner, reason=reason)
+
                             else:
                                 # select other piece
                                 p = gs.board[row][col]
@@ -926,7 +953,7 @@ def main():
                                     if res:
                                         running_side = 'b' if running_side == 'w' else 'w'
                                         last_tick = pygame.time.get_ticks()
-                                        print("Redo applied.")
+                                        print("Đã tiến lên.")
                                     else:
                                         print("Redo failed.")
                                 else:
@@ -935,7 +962,8 @@ def main():
                                 game_over = True
                                 winner = None
                                 pygame.display.set_caption("Draw")
-                                show_draw_modal(seconds=3)
+                                show_result_modal(None, reason="Thỏa thuận / Bấm Hòa", seconds=3)
+
                             elif clicked_label == "Thoát":
                                 pygame.quit()
                                 sys.exit()
@@ -1020,7 +1048,7 @@ def compute_panel_layout():
 # -------------------------
 # Simple modal for draw (fix: ensure function exists)
 # -------------------------
-def show_draw_modal(seconds=3):
+def show_draw_modal(seconds=MODAL_DISPLAY_SECONDS):
     popup_w, popup_h = 360, 140
     popup_x = WIDTH + (PANEL_WIDTH - popup_w) // 2
     popup_y = HEIGHT // 2 - popup_h // 2
@@ -1046,6 +1074,70 @@ def show_draw_modal(seconds=3):
         pygame.display.flip()
         if pygame.time.get_ticks() - start >= seconds * 1000:
             return
+
+# -------------------------
+# Result modal + game-end checker (NEW)
+# -------------------------
+def show_result_modal(winner, reason=None, seconds=MODAL_DISPLAY_SECONDS):
+    """
+    winner: 'White' or 'Black' or None (for draw)
+    reason: optional string to show (e.g. 'Checkmate', 'on time', ...)
+    """
+    popup_w, popup_h = 420, 160
+    popup_x = WIDTH + (PANEL_WIDTH - popup_w) // 2
+    popup_y = HEIGHT // 2 - popup_h // 2
+    popup_rect = pygame.Rect(popup_x, popup_y, popup_w, popup_h)
+    start = pygame.time.get_ticks()
+    title = ""
+    if winner is None:
+        title = "Hòa - Trận đấu kết thúc"
+    else:
+        title = f"{winner} đã thắng"
+        if reason:
+            title += f" ({reason})"
+    hint = MOVELOG_FONT.render(f"Thoát sau {seconds} giây...  (nhấn phím hoặc click để đóng)", True, (10,10,10))
+
+    while True:
+        for e in pygame.event.get():
+            if e.type == pygame.QUIT:
+                pygame.quit(); sys.exit()
+            if e.type in (pygame.KEYDOWN, pygame.MOUSEBUTTONDOWN):
+                return
+        # draw overlay + popup
+        overlay = pygame.Surface((WIDTH, HEIGHT))
+        overlay.set_alpha(140)
+        overlay.fill((0,0,0))
+        screen.blit(overlay, (0,0))
+        pygame.draw.rect(screen, PANEL_BG, popup_rect, border_radius=8)
+        pygame.draw.rect(screen, PANEL_BORDER, popup_rect, 2, border_radius=8)
+        t1 = BUTTON_FONT.render(title, True, (10,10,10))
+        screen.blit(t1, (popup_rect.centerx - t1.get_width()//2, popup_rect.y + 28))
+        screen.blit(hint, (popup_rect.centerx - hint.get_width()//2, popup_rect.y + 80))
+        pygame.display.flip()
+        if pygame.time.get_ticks() - start >= seconds * 1000:
+            return
+
+def check_game_end(gs):
+    """
+    Return tuple (is_over:bool, winner:str|None, reason:str|None)
+    winner is 'White' or 'Black' or None for draw.
+    """
+    # insufficient material -> draw
+    if gs.is_insufficient_material():
+        return True, None, "Thiếu lực lượng"
+
+    moves = gs.get_all_legal_moves()
+    if moves:
+        return False, None, None
+
+    # no legal moves -> either checkmate or stalemate
+    to_move = 'w' if gs.white_to_move else 'b'
+    if gs.in_check(to_move):
+        # the side to move is checkmated -> opponent wins
+        opp = 'Black' if to_move == 'w' else 'White'
+        return True, opp, "Chiếu bí"
+    else:
+        return True, None, "Hòa (Stalemate)"
 
 # ensure the script runs main when executed
 if __name__ == "__main__":
